@@ -1,0 +1,15 @@
+VERIFICACIÓN DE ENTREGA
+
+Instalación con pnpm install --frozen-lockfile: correcta.
+ESLint: 0 errores, 4 advertencias Fast Refresh.
+TypeScript (aplicación y configuración): correcto.
+Pruebas de lógica, Excel y PostgreSQL aislado: 52 aprobadas, 0 fallidas.
+Pruebas anteriores en Chromium/desarrollo: 6 aprobadas.
+Compilación final de producción: correcta.
+Repetición de navegador/producción: no completada por limitación del entorno.
+
+No se ejecutaron migraciones ni escrituras en el Supabase alojado.
+No se publicó el frontend.
+No se recibió un archivo Excel real del usuario.
+
+Consulta ACTUALIZACION.md y AUDITORIA.md para el alcance y los pasos de activación.
