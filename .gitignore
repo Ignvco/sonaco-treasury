@@ -30,3 +30,6 @@ code_template.zip
 test-results/
 playwright-report/
 *.tsbuildinfo
+
+supabase/.temp/
+.env
