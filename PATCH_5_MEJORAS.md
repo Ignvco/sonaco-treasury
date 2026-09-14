@@ -1,6 +1,6 @@
 # Parche de las cinco mejoras
 
-**Estado: borrador de revisión. Falta ejecutar la compilación y las pruebas SQL y de navegador. No aplicar a la plataforma activa todavía.**
+**Estado: comprobaciones locales completadas el 14/09/2026. Listo para revisión y aplicación siguiendo los pasos de esta guía.**
 
 El código está en la rama `codex/base-treasury-five-improvements` y en el [PR de revisión](https://github.com/Ignvco/sonaco-treasury/pull/1). La rama principal conserva la versión que funciona.
 
@@ -42,7 +42,7 @@ Si `git apply --check` muestra un error, detente y comparte ese mensaje: la vers
 
 Este parche parte de la versión «Importa exclusivamente BASE del libro SONACOL», commit `c5d6004fcb62b9e0c4c1396f26b068d0d589919d`.
 
-## 2. Ejecutar las comprobaciones pendientes
+## 2. Repetir las comprobaciones en tu Mac
 
 Node debe ser 22.13 o posterior; la configuración de pruebas usa Node 24.
 
@@ -83,7 +83,11 @@ No cambies las variables de conexión del proyecto. El parche no contiene el Exc
 
 ## Verificación realizada y pendiente
 
-- Se ejecutaron nueve casos del cálculo financiero en un motor JavaScript aislado, usando los cuerpos de las funciones de esta revisión: suma literal, filtros de moneda, horizontes, vínculos y trazabilidad sin duplicación.
-- Falta ejecutar la suite completa de TypeScript/ESLint, PGlite y Playwright, y volver a leer el libro original con la versión final.
-- El entorno local del chat aparece desconectado. El intento de GitHub Actions finalizó antes de ejecutar pasos y no generó registros de ejecución.
-- El PR permanece en borrador. No se ha actualizado ninguna base de datos activa ni desplegado la aplicación.
+- `pnpm check`: 93 pruebas aprobadas, 0 fallidas; TypeScript sin errores. ESLint conserva 6 advertencias que no bloquean la ejecución.
+- `pnpm build`: compilación de producción completada.
+- `pnpm test:e2e`: 7 pruebas aprobadas en Chromium, incluida la persistencia de filtros y la apertura y cierre del desglose en móvil.
+- Se corrigieron dos pruebas: la fecha de PGlite se compara como fecha calendario y el botón del diálogo se busca por su nombre accesible «Cerrar».
+- Lectura del libro original: 1.781 registros BASE, 1.720 movimientos BANCO, 0 errores y 7 advertencias. Suma REAL de BANCO: **14.457.712,22**, mostrada sin decimales como **14.457.712**. Se comprobó que los bytes del Excel no cambiaron.
+- Importación del libro original en PGlite aislado: 1.781 registros guardados sin errores. Una segunda carga reconoció los 1.781 como «sin cambios», creó 0 registros financieros nuevos y conservó la misma caja.
+- Estas verificaciones se completaron localmente, sin depender de GitHub Actions. Las pruebas de navegador usan respuestas de API simuladas; la prueba del libro ejecuta las migraciones y funciones SQL en PGlite.
+- Pendiente en tu entorno: aplicar el SQL v6 y revisar la carga de BASE con los datos que ya tienes guardados, siguiendo el apartado 3. No se ha actualizado ninguna base de datos activa ni desplegado la aplicación desde esta revisión.

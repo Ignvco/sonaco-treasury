@@ -84,6 +84,7 @@ test("dashboard filters survive reload and financial breakdown opens on mobile",
  await expect(page.getByRole("heading",{name:"Resumen de caja"})).toBeVisible();
  await page.getByLabel("Horizonte").selectOption("7");await page.reload();await expect(page.getByLabel("Horizonte")).toHaveValue("7");
  await page.getByRole("button",{name:/Caja disponible.*Ver desglose/}).click();await expect(page.getByRole("dialog")).toBeVisible();
- await page.getByRole("button",{name:"Close",exact:true}).click();
+ await page.getByRole("dialog").getByRole("button",{name:"Cerrar",exact:true}).click();
+ await expect(page.getByRole("dialog")).toBeHidden();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });
