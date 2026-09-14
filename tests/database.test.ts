@@ -96,7 +96,8 @@ test("BASE v6: invoice amount and due date update in place only after selection"
  const plan=await compareBase([changed]);assert.equal(plan.rows[0].change,"modified");const id=plan.rows[0].entityId;
  const skip=await applyBase("v6-invoice-skip.xlsx",[changed],plan.revision,[]);assert.equal(skip.imported_records,0);
  const fresh=await compareBase([changed]);await applyBase("v6-invoice-update.xlsx",[changed],fresh.revision,[5767]);
- const invoice=(await db.query("select * from invoices where id=$1",[id])).rows[0];assert.equal(Number(invoice.amount),1800);assert.equal(invoice.due_date,"2026-09-21");
+ // Compare the stored calendar date explicitly; PGlite returns DATE columns as Date objects.
+ const invoice=(await db.query("select amount, to_char(due_date, 'YYYY-MM-DD') as due_date from invoices where id=$1",[id])).rows[0];assert.equal(Number(invoice.amount),1800);assert.equal(invoice.due_date,"2026-09-21");
  assert.equal((await compareBase([changed])).rows[0].change,"unchanged");
  assert.equal((await db.query("select count(*)::int n from invoices where document='V6-001'")).rows[0].n,1);
 });
