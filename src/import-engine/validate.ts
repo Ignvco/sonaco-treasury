@@ -4,6 +4,7 @@ import type { ImportIssue } from "./types";
 
 interface Validatable {
   entityType: ImportEntityType;
+  bank?: unknown; balance?: unknown; reconciledBalance?: unknown;
   document?: unknown; amount?: unknown; debe?: unknown; haber?: unknown;
   issueDate?: unknown; dueDate?: unknown; date?: unknown;
   startDate?: unknown; endDate?: unknown; customer?: unknown; rut?: unknown;
@@ -19,6 +20,12 @@ export function validateRecord(r: Validatable): ImportIssue[] {
   };
   if (r.entityType === "unknown") error("No se reconoció el tipo de datos. Configura las columnas y el destino de esta hoja.");
   if (r.entityType === "reconciliation") error("Los saldos de conciliación requieren revisión manual; esta hoja no se importará como movimientos.");
+  if (r.entityType === "bank_account") {
+    if (!r.bank) error("Falta el banco de la cuenta.");
+    requireDate(r.date,"saldo");
+    for (const value of [r.balance,r.reconciledBalance]) if (typeof value!=="number" || !Number.isFinite(value)) error("Saldo contable o conciliado inválido.");
+    return issues;
+  }
   if (r.entityType === "customer") {
     if (!String(r.customer ?? "").trim()) error("Falta el nombre del cliente.");
     return issues;

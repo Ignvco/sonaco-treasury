@@ -12,6 +12,8 @@ export interface DetectedColumn {
 }
 
 export interface SheetResult {
+  profile?: string;
+  note?: string;
   name: string;
   headerIndex: number;
   columns: DetectedColumn[];

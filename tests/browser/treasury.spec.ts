@@ -2,7 +2,13 @@ import { test, expect, type Page } from "@playwright/test";
 import * as XLSX from "xlsx";
 import { mkdir } from "node:fs/promises";
 const uid="10000000-0000-0000-0000-000000000001";
-function excel(rows?: unknown[][]) { const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows ?? [["Fecha","Glosa","Debe","Haber","Banco","Moneda"],["13/09/2026","Cobro",45000,0,"BCI","CLP"],["13/09/2026","Pago",0,30000,"BCI","CLP"]]),"Movimientos"); return XLSX.write(wb,{bookType:"xlsx",type:"buffer"}); }
+function excel() {
+  const wb=XLSX.utils.book_new();
+  const headers=["TABLA ORIGEN","EMPRESA","MES","FECHA","CODIGO CTA","DESCRIPCION CTA","COMP","RUT","RAZON SOCIAL","TIPO DOCTO","N DOCTO","GLOSA","VCTO REAL","VCTO","AJ VCTO","DEBE","HABER","REAL","ESTADO","CUENTA INFORME","OPERACIÓN"];
+  const records=[["BANCO","SONACOL","SEPTIEMBRE",46278,511010007,"Banco BCI",1,"","","","","Cobro",null,46278,null,45000,0,45000,"CONCILIADO","511010007 Banco BCI","Recaudacion Clientes"],["BANCO","SONACOL","SEPTIEMBRE",46278,511010007,"Banco BCI",2,"","","","","Pago",null,46278,null,0,30000,-30000,"CONCILIADO","511010007 Banco BCI","Proveedores"]];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([headers,...records]),"BASE");
+  return XLSX.write(wb,{bookType:"xlsx",type:"buffer"});
+}
 async function setup(page:Page, role="tesoreria", rpcError=false) {
   const api="https://hhksaxwbwbvkoksxfhni.supabase.co";
   const user={id:uid,email:"tesoreria@example.test",aud:"authenticated",role:"authenticated",app_metadata:{provider:"email"},user_metadata:{},created_at:"2026-09-13T10:00:00Z"};
@@ -12,6 +18,7 @@ async function setup(page:Page, role="tesoreria", rpcError=false) {
     const url=new URL(route.request().url());
     if(url.pathname.includes("/auth/v1/")) return route.fulfill({json:user});
     const table=url.pathname.split("/").at(-1);
+    if(table==="get_excel_import_status") return route.fulfill({json:{records:0,errors:0,last_sync_at:null,history:[]}});
     if(table==="import_treasury_records") {
       if(rpcError) return route.fulfill({status:404,json:{code:"PGRST202",message:"Function not found"}});
       const body=route.request().postDataJSON();
@@ -33,12 +40,13 @@ async function setup(page:Page, role="tesoreria", rpcError=false) {
   });
   await page.route("https://api.enter.pro/**",route=>route.abort());
 }
-test("real browser worker reads Excel, previews and commits a mapped batch", async({page})=>{
+test("real browser worker reads BASE, previews and commits a batch", async({page})=>{
   await setup(page); const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
   await page.goto("/importations");await expect(page.getByRole("heading",{name:"Importaciones",exact:true})).toBeVisible();
   await mkdir("docs/screenshots",{recursive:true});await page.screenshot({animations:"disabled",path:"docs/screenshots/importaciones-desktop.png",fullPage:true});
   await page.getByLabel("Seleccionar archivo Excel").setInputFiles({name:"movimientos.xlsx",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",buffer:excel()});
   await expect(page.getByRole("heading",{name:"Revisa los datos antes de importar"})).toBeVisible();
+  await expect(page.getByText("BASE-ONLY-20260914-v1",{exact:false}).first()).toBeVisible();
   await expect(page.getByRole("button",{name:"Importar 2 filas"})).toBeEnabled();
   await page.screenshot({animations:"disabled",path:"docs/screenshots/vista-previa-desktop.png",fullPage:true});
   await page.getByRole("button",{name:"Importar 2 filas"}).click();

@@ -25,7 +25,7 @@ import {
   type CashFlowCategory,
   type CashFlowType,
 } from "@/financial-engine/types";
-import { formatDateMedium, formatDateShort, todayISO } from "@/financial-engine/format";
+import { formatDateMedium, formatDateShort, formatMoney, todayISO } from "@/financial-engine/format";
 import { cn } from "@/lib/utils";
 
 type ChartMode = "daily" | "weekly" | "monthly";
@@ -241,17 +241,17 @@ function MovementsDetail({
   refreshKey: number;
   banks: { value: string; label: string }[];
 }) {
-  const { money } = useCurrency();
-  const { data: movements, loading } = useAsyncData(
+  const { data: movements, loading, error } = useAsyncData(
     () =>
       dataService.getMovementsFiltered({
+        status: filters.status || undefined,
         from: filters.from || undefined,
         to: filters.to || undefined,
         bankId: filters.bankId || undefined,
         category: (filters.category as CashFlowCategory) || undefined,
         type: (filters.type as CashFlowType) || undefined,
       }),
-    [filters.from, filters.to, filters.bankId, filters.category, filters.type, refreshKey],
+    [filters.from, filters.to, filters.bankId, filters.category, filters.type, filters.status, refreshKey],
   );
 
   const categories = Object.entries(CASHFLOW_CATEGORY_LABEL).map(([value, label]) => ({
@@ -262,7 +262,7 @@ function MovementsDetail({
   const statuses = Object.entries(CASHFLOW_STATUS_LABEL).map(([value, label]) => ({ value, label }));
 
   return (
-    <SectionCard title="Movimientos" subtitle="Registros del flujo de caja">
+    <SectionCard title="Movimientos" subtitle="Importes en su moneda original. Los movimientos ya conciliados no se vuelven a sumar al saldo.">
       <FilterBar>
         <FilterSelect
           value={filters.bankId}
@@ -293,7 +293,7 @@ function MovementsDetail({
         />
       </FilterBar>
 
-      {loading ? (
+      {error ? <ErrorState message={error}/> : loading ? (
         <LoadingState label="Filtrando movimientos…" />
       ) : !movements || movements.length === 0 ? (
         <EmptyState title="Sin movimientos" description="No hay registros que coincidan con los filtros." />
@@ -329,16 +329,17 @@ function MovementsDetail({
             },
             {
               key: "amount",
-              header: "Monto",
+              header: "Monto original",
               align: "right",
               sortValue: (m) => m.amount,
               render: (m) => (
                 <span className={cn("t-num font-semibold", m.type === "income" ? "text-success" : "text-danger")}>
                   {m.type === "income" ? "+" : "-"}
-                  {money(m.amount)}
+                  {formatMoney(m.amount, m.currency)}
                 </span>
               ),
             },
+            { key: "currency", header: "Moneda", render: (m) => m.currency },
             { key: "status", header: "Estado", align: "center", render: (m) => <StatusBadge label={CASHFLOW_STATUS_LABEL[m.status]} /> },
           ]}
         />

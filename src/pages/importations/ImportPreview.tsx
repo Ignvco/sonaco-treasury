@@ -8,7 +8,7 @@ import type { ImportEntityType } from "@/financial-engine/types";
 import { formatMoney } from "@/financial-engine/format";
 import { downloadFile, toCSV } from "@/lib/export";
 
-const ENTITIES: Record<string, string> = { cash_flow: "Movimientos", invoice: "Facturas", customer: "Clientes", investment: "Inversiones", projection: "Proyecciones", reconciliation: "Conciliación (revisión manual)", unknown: "Sin clasificar" };
+const ENTITIES: Record<string, string> = { bank_account: "Cuentas y saldos", cash_flow: "Movimientos", invoice: "Facturas", customer: "Clientes", investment: "Inversiones", projection: "Proyecciones", reconciliation: "Conciliación (revisión manual)", unknown: "Sin clasificar" };
 const FIELDS: Record<string, string> = { date: "Fecha", amount: "Monto", type: "Ingreso / egreso", description: "Descripción", bank: "Banco", account: "Cuenta", currency: "Moneda", amountDebe: "Debe (ingreso contable)", amountHaber: "Haber (egreso contable)", charge: "Cargo bancario (egreso)", credit: "Abono bancario (ingreso)", document: "Documento", customer: "Cliente", rut: "RUT", issueDate: "Fecha de emisión", dueDate: "Vencimiento", startDate: "Inicio inversión", endDate: "Término inversión", rate: "Tasa", interest: "Interés", status: "Estado" };
 const LABELS: Record<string, string> = { VALID: "Listo", WARNING: "Revisar", ERROR: "No se importará", DUPLICATE: "Duplicado" };
 
@@ -36,7 +36,8 @@ export function ImportPreview({ preview, applied, busy, onAnalyze, onConfirm, on
         <label className="grid gap-1.5 text-xs font-medium">Mostrar<select className="t-input" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="">Todos los registros</option>{Object.entries(LABELS).map(([v, text]) => <option key={v} value={v}>{text}</option>)}</select></label>
         <button className="t-button-secondary" onClick={() => downloadFile(toCSV(preview.records.filter((r) => r.status !== "VALID").map((r) => ({ Hoja: r.sheet, Fila: r.row, Estado: LABELS[r.status], Detalle: r.warnings }))), "revision-importacion.csv", "text/csv;charset=utf-8")}><Download size={15} /> Descargar revisión</button>
       </div>
-      {sheet && <details className="my-4 rounded-xl border bg-slate-50/70 p-4">
+      {sheet?.profile && <p className="my-4 rounded-xl bg-brand-soft p-4 text-sm"><strong>Formato {sheet.profile}.</strong> {sheet.note}</p>}
+      {sheet && !sheet.profile && <details className="my-4 rounded-xl border bg-slate-50/70 p-4">
         <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold"><Settings2 size={16} /> Ajustar hoja y columnas <span className="ml-auto text-xs font-normal text-muted-foreground">{ENTITIES[sheet.entityType]}</span></summary>
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Si la detección no coincide con tu archivo, indica dónde están los encabezados y qué representa cada columna. Debe/Haber usa la convención contable; Cargo/Abono usa la cartola bancaria.</p>
         <div className="my-4 grid gap-3 sm:grid-cols-3">
@@ -54,7 +55,7 @@ export function ImportPreview({ preview, applied, busy, onAnalyze, onConfirm, on
         { key: "detail", header: "Descripción / cliente", className: "!whitespace-normal min-w-[170px] max-w-[280px]", render: (r) => String(r.normalized.description || r.normalized.customer || r.normalized.document || "—") },
         { key: "date", header: "Fecha", render: (r) => String(r.normalized.date || r.normalized.issueDate || r.normalized.startDate || "—") },
         { key: "type", header: "Tipo", render: (r) => r.entityType === "cash_flow" || r.entityType === "projection" ? (r.normalized.type === "expense" ? "Egreso" : "Ingreso") : ENTITIES[r.entityType] },
-        { key: "amount", header: "Monto original", align: "right", render: (r) => typeof r.normalized.amount === "number" ? formatMoney(r.normalized.amount, r.normalized.currency as "CLP") : "—" },
+        { key: "amount", header: "Monto original", align: "right", render: (r) => typeof (r.normalized.amount ?? r.normalized.balance) === "number" ? formatMoney((r.normalized.amount ?? r.normalized.balance) as number, r.normalized.currency as "CLP") : "—" },
         { key: "status", header: "Estado", render: (r) => <StatusBadge label={LABELS[r.status]} tone={r.status === "VALID" ? "success" : r.status === "ERROR" ? "danger" : r.status === "WARNING" ? "warning" : "muted"} /> },
         { key: "warnings", header: "Detalle", className: "!whitespace-normal min-w-[230px] max-w-[340px]", render: (r) => <span className="text-xs text-muted-foreground">{r.warnings || "Validación correcta"}</span> },
       ]} />

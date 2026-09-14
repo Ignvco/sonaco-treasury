@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { findBaseSheet, readSonacol } from "./sonacol";
 import type { ImportEntityType } from "@/financial-engine/types";
 import { analyzeSheet, cellText, cellToDate, cellToNumber, detectColumns, isErrorCell } from "./detect";
 import { classifyCategory, classifyType, normalizeBankName, normalizeCurrency, normalizeStatus } from "./normalize";
@@ -7,6 +8,10 @@ import { validateRecord } from "./validate";
 
 export interface WorkSheetData {
   name: string;
+  prepared?: ProcessedRecord[];
+  profile?: string;
+  headerIndex?: number;
+  note?: string;
   rows: unknown[][];
   /** Original 1-based Excel row numbers when blank rows have been omitted. */
   rowNumbers?: number[];
@@ -23,14 +28,18 @@ function hasCellContent(value: unknown): boolean {
 }
 
 /** Preserve cell types, errors, leading zeros and original Excel row numbers. */
-export async function parseWorkbook(buffer: ArrayBuffer): Promise<WorkSheetData[]> {
+export async function parseWorkbook(buffer: ArrayBuffer, baseOnly = true): Promise<WorkSheetData[]> {
   const bytes = new Uint8Array(buffer);
   if (!(bytes[0] === 0x50 && bytes[1] === 0x4b) && !(bytes[0] === 0xd0 && bytes[1] === 0xcf))
     throw new Error("El contenido no corresponde a un libro Excel válido. Abre el archivo en Excel y guárdalo como .xlsx.");
+  const metadata = XLSX.read(buffer, { type: "array", bookSheets: true });
+  const baseName = baseOnly ? findBaseSheet(metadata.SheetNames) : null;
   const wb = XLSX.read(buffer, {
+    ...(baseName ? { sheets: [baseName] } : {}),
     type: "array", dense: false, cellDates: false, bookVBA: false,
     cellFormula: true, sheetStubs: false, cellStyles: false,
   });
+  if (baseName) return readSonacol(wb, baseName);
   const sheets: WorkSheetData[] = [];
   let cells = 0;
   for (const name of wb.SheetNames) {
@@ -70,6 +79,19 @@ export function processWorkbook(sheets: WorkSheetData[], onProgress?: (done: num
   for (const [sheetIndex, sheet] of sheets.entries()) {
     onProgress?.(sheetIndex + 1, sheets.length, `Analizando hoja “${sheet.name}”…`);
     const override = overrides[sheet.name] ?? {};
+    if (sheet.prepared) {
+      sheetResults.push({name:sheet.name,headerIndex:sheet.headerIndex??1,columns:[],dataRows:override.skip?0:sheet.prepared.length,entityType:sheet.prepared[0]?.entityType??"unknown",profile:sheet.profile,note:sheet.note});
+      if (!override.skip) for (const input of sheet.prepared) {
+        const record={...input};
+        if(record.status!=="ERROR") {
+          if(seen.has(record.dedupeKey)) {record.status="DUPLICATE";record.warnings="Fila idéntica a otra del archivo.";}
+          else seen.add(record.dedupeKey);
+        }
+        records.push(record);
+      }
+      if(records.length>MAX_IMPORT_ROWS) throw new Error("El libro supera 20.000 registros financieros. Las filas auxiliares no cuentan para este límite.");
+      continue;
+    }
     const detected = analyzeSheet(sheet.name, sheet.rows);
     const rowNumbers = sheet.rowNumbers ?? sheet.rows.map((_, i) => i + 1);
     const headerIndex = override.headerIndex ?? (detected ? rowNumbers[detected.headerIndex - 1] : rowNumbers[0]) ?? 1;

@@ -18,7 +18,7 @@ interface ImportMessage {
 ctx.onmessage = async (e: MessageEvent<ImportMessage>) => {
   const { file, name, overrides } = e.data;
   try {
-    const sheets = await parseWorkbook(file);
+    const sheets = await parseWorkbook(file, true);
     if (sheets.length === 0) {
       ctx.postMessage({ type: "error", message: "El archivo no contiene hojas con datos." });
       return;
@@ -27,7 +27,7 @@ ctx.onmessage = async (e: MessageEvent<ImportMessage>) => {
       type: "progress",
       done: 0,
       total: sheets.length,
-      phase: `Analizando ${sheets.length} hojas…`,
+      phase: "Analizando únicamente BASE…",
     });
     const summary: ImportSummary = processWorkbook(sheets, (done, total, phase) => {
       ctx.postMessage({ type: "progress", done, total, phase });

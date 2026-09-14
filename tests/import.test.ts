@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
 import { analyzeSheet, cellText, cellToDate, cellToNumber, detectHeaderRow, mapHeader } from "../src/import-engine/detect.ts";
-import { parseWorkbook, processWorkbook } from "../src/import-engine/pipeline.ts";
+import { parseWorkbook as readWorkbook, processWorkbook } from "../src/import-engine/pipeline.ts";
 import { toCSV } from "../src/lib/export.ts";
 
+const parseWorkbook = (buffer: ArrayBuffer) => readWorkbook(buffer, false);
 const flow = (rows: unknown[][]) => processWorkbook([{ name: "Movimientos", rows }]);
 const headers = ["Fecha", "Descripción", "Debe", "Haber", "Banco", "Moneda"];
 for (const [label, input, expected] of [

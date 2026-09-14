@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { supabase } from "@/integrations/supabase/client";
-import type { ImportBatch, ImportRecord, ImportRecordStatus, SyncSource, SyncHistory } from "@/financial-engine/types";
+import type { ImportBatch, ImportRecord, ImportRecordStatus, SyncHistory } from "@/financial-engine/types";
 import { MAX_FILE_BYTES, type ImportSummary } from "@/import-engine/types";
 import type { ImportOverrides, ImportPreview } from "@/import-engine/types";
 
@@ -33,14 +33,14 @@ export async function analyzeFile(file: File, onProgress?: (p: ImportProgress) =
   const buffer = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", buffer);
   const originalHash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-  const effective = new TextEncoder().encode(originalHash + JSON.stringify(overrides));
+  const effective = new TextEncoder().encode("BASE-ONLY-20260914-v1:" + originalHash + JSON.stringify(overrides));
   const fileHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", effective)), (b) => b.toString(16).padStart(2, "0")).join("");
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("../workers/xlsx.worker.ts", import.meta.url), { type: "module" });
     const cleanup = () => { worker.terminate(); clearTimeout(timer); signal?.removeEventListener("abort", abort); };
     const fail = (reason: string) => { cleanup(); reject(new Error(reason)); };
     const abort = () => fail("Análisis cancelado.");
-    const timer = setTimeout(() => fail("El análisis superó dos minutos. Divide el libro o elimina filas vacías con formato."), 120000);
+    const timer = setTimeout(() => fail("El análisis superó dos minutos. Vuelve a intentarlo y comprueba que usas la versión actualizada del importador."), 120000);
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) return abort();
     worker.onmessage = ({ data }) => {
@@ -88,15 +88,11 @@ export const importService = {
       if (!data || data.length < 500) return result;
     }
   },
-  async getSyncSources(): Promise<SyncSource[]> {
-    const { data, error } = await db.from("sync_sources").select("*").order("created_at");
-    if (error) throw new Error(message(error));
-    return (data ?? []).map((r: any) => ({ id: r.id, source: r.source, name: r.name, status: r.status, enabled: r.enabled, lastSyncAt: r.last_sync_at, recordsSynced: r.records_synced, errors: r.errors }));
-  },
-  async getSyncHistory(): Promise<SyncHistory[]> {
-    const { data, error } = await db.from("sync_history").select("*").order("synced_at", { ascending: false }).limit(30);
-    if (error) throw new Error(message(error));
-    return (data ?? []).map((r: any) => ({ id: r.id, source: r.source, records: r.records, durationSeconds: Number(r.duration_seconds), status: r.status, errorMessage: r.error_message, syncedAt: r.synced_at }));
+  async getIntegrationStatus(): Promise<{records:number;lastSyncAt:string|null;errors:number;history:SyncHistory[]}> {
+    const {data,error}=await db.rpc("get_excel_import_status");
+    if(error) throw new Error(message(error));
+    return {records:Number(data.records),lastSyncAt:data.last_sync_at,errors:Number(data.errors),
+      history:data.history.map((r:any)=>({id:r.id,source:r.source,records:Number(r.records),durationSeconds:Number(r.duration_seconds),status:r.status,errorMessage:r.error_message,syncedAt:r.synced_at,verified:r.verified}))};
   },
   async runSync(source: "erp" | "excel" | "banks"): Promise<void> {
     throw new Error(source === "excel" ? "Ve a Importaciones y selecciona un archivo para actualizar tus datos." : "Esta integración todavía no tiene un conector configurado. No se sincronizaron registros.");

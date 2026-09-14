@@ -125,6 +125,7 @@ export interface Investment {
   currency: Currency;
   startDate: string; // ISO
   endDate: string; // ISO
+  rateKnown?: boolean;
   rate: number; // annual rate %
   estimatedInterest: number;
   status: InvestmentStatus;
@@ -206,6 +207,7 @@ export type ImportEntityType =
   | "cash_flow"
   | "investment"
   | "projection"
+  | "bank_account"
   | "reconciliation"
   | "unknown";
 
@@ -250,11 +252,12 @@ export interface SyncSource {
 }
 
 export interface SyncHistory {
+  verified?: boolean;
   id: string;
   source: string;
   records: number;
   durationSeconds: number;
-  status: "Connected" | "Syncing" | "Success" | "Warning" | "Error";
+  status: "Connected" | "Syncing" | "Success" | "Warning" | "Error" | "Unverified" | "NoChanges";
   errorMessage: string | null;
   syncedAt: string;
 }

@@ -37,7 +37,7 @@ import {
   CASHFLOW_TYPE_LABEL,
   type CashFlow,
 } from "@/financial-engine/types";
-import { formatDateMedium, formatDateShort, toISODate } from "@/financial-engine/format";
+import { formatDateMedium, formatDateShort, formatMoney, toISODate } from "@/financial-engine/format";
 import { cn } from "@/lib/utils";
 
 type ChartMode = "daily" | "weekly" | "monthly";
@@ -90,7 +90,7 @@ export default function Dashboard() {
     Fecha: formatDateMedium(m.date),
     Cuenta: bankName.get(m.bankId) ?? "—",
     Tipo: CASHFLOW_TYPE_LABEL[m.type],
-    Monto: m.type === "income" ? `+${money(m.amount)}` : `-${money(m.amount)}`,
+    Monto: m.type === "income" ? `+${formatMoney(m.amount, m.currency)}` : `-${formatMoney(m.amount, m.currency)}`,
     Estado: CASHFLOW_STATUS_LABEL[m.status],
   }));
 
@@ -367,13 +367,13 @@ export default function Dashboard() {
               },
               {
                 key: "amount",
-                header: "Monto",
+                header: "Monto original",
                 align: "right",
                 sortValue: (m) => m.amount,
                 render: (m) => (
                   <span className={cn("t-num text-[13px] font-semibold", m.type === "income" ? "text-success" : "text-danger")}>
                     {m.type === "income" ? "+" : "-"}
-                    {money(m.amount)}
+                    {formatMoney(m.amount, m.currency)}
                   </span>
                 ),
               },

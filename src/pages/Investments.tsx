@@ -58,6 +58,7 @@ export default function Investments() {
       total: active.reduce((a, i) => a + i.amount, 0),
       dueSoonAmount: dueSoon.reduce((a, i) => a + i.amount, 0),
       dueSoonCount: dueSoon.length,
+      unknownInterest: active.filter((i) => i.rateKnown === false).length,
       interest: active.reduce((a, i) => a + i.estimatedInterest, 0),
     };
   }, [items]);
@@ -73,8 +74,8 @@ export default function Investments() {
     Inicio: formatDateMedium(i.startDate),
     Término: formatDateMedium(i.endDate),
     "Días restantes": Math.max(0, daysUntil(i.endDate)),
-    Tasa: `${i.rate}%`,
-    "Interés estimado": i.estimatedInterest,
+    Tasa: i.rateKnown === false ? "No informada" : `${i.rate}%`,
+    "Interés estimado": i.rateKnown === false ? "No informado" : i.estimatedInterest,
     Estado: INVESTMENT_STATUS_LABEL[i.status],
   }));
 
@@ -96,7 +97,7 @@ export default function Investments() {
           subtext={summary.dueSoonCount > 0 ? `${summary.dueSoonCount} inversiones` : "Sin vencimientos próximos"}
           tone={summary.dueSoonCount > 0 ? "warning" : "success"}
         />
-        <KpiCard label="Intereses estimados" value={summary.interest} subtext="Al vencimiento" />
+        <KpiCard label="Intereses estimados" value={summary.interest} valueText={summary.unknownInterest ? "No disponible" : undefined} subtext={summary.unknownInterest ? `${summary.unknownInterest} inversiones sin tasa informada` : "Al vencimiento"} />
         <KpiCard
           label="Liquidez disponible"
           value={dashboard?.kpis.availableCash ?? 0}
@@ -224,8 +225,8 @@ export default function Investments() {
                 );
               },
             },
-            { key: "rate", header: "Tasa", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px]">{i.rate.toFixed(1)}%</span> },
-            { key: "interest", header: "Interés est.", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px] text-muted-foreground">{money(i.estimatedInterest)}</span> },
+            { key: "rate", header: "Tasa", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px]">{i.rateKnown === false ? "No informada" : `${i.rate.toFixed(1)}%`}</span> },
+            { key: "interest", header: "Interés est.", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px] text-muted-foreground">{i.rateKnown === false ? "No informado" : money(i.estimatedInterest)}</span> },
             { key: "status", header: "Estado", align: "center", render: (i) => <StatusBadge label={INVESTMENT_STATUS_LABEL[i.status]} /> },
           ]}
         />
@@ -250,8 +251,8 @@ export default function Investments() {
               <div className="grid grid-cols-2 gap-3">
                 <InvestDetail label="Fecha de inicio" value={formatDateMedium(selected.startDate)} />
                 <InvestDetail label="Fecha de término" value={formatDateMedium(selected.endDate)} />
-                <InvestDetail label="Tasa anual" value={`${selected.rate.toFixed(1)}%`} />
-                <InvestDetail label="Interés estimado" value={money(selected.estimatedInterest)} />
+                <InvestDetail label="Tasa anual" value={selected.rateKnown === false ? "No informada" : `${selected.rate.toFixed(1)}%`} />
+                <InvestDetail label="Interés estimado" value={selected.rateKnown === false ? "No informado" : money(selected.estimatedInterest)} />
               </div>
               <div className="flex items-center justify-between rounded-xl border border-[#EAEAEA] px-4 py-3">
                 <span className="text-[12px] text-muted-foreground">Estado</span>

@@ -8,6 +8,7 @@ import type { Currency } from "@/financial-engine/types";
 interface KpiCardProps {
   label: string;
   value: number;
+  valueText?: string;
   currency?: Currency;
   variation?: number; // % change, may be negative
   subtext?: string;
@@ -22,6 +23,7 @@ interface KpiCardProps {
 export function KpiCard({
   label,
   value,
+  valueText,
   currency,
   variation,
   subtext,
@@ -45,7 +47,7 @@ export function KpiCard({
       </div>
 
       <div className={cn("t-kpi-value", tone === "success" && "text-success", tone === "danger" && "text-danger", compact && "text-[22px]", value < 0 && "text-danger")}>
-        {plain ? formatNumber(value) : money(value, currency)}
+        {valueText ?? (plain ? formatNumber(value) : money(value, currency))}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

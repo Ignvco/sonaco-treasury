@@ -94,6 +94,9 @@ function rateMap(): Promise<Record<string, number>> {
 }
 async function financialRows(table: string, fields: string[], configure?: (query: any) => any): Promise<any[]> {
   const rows = await readRows(table, configure);
+  return convertFinancialRows(rows, fields);
+}
+async function convertFinancialRows(rows: any[], fields: string[]): Promise<any[]> {
   if (!rows.some((r) => r.currency && r.currency !== "CLP")) return rows;
   const rates = await rateMap();
   return rows.map((r) => {
@@ -157,6 +160,7 @@ const toInvestment = (r: any): Investment => ({
   currency: r.currency,
   startDate: r.start_date,
   endDate: r.end_date,
+  rateKnown: r.rate_known !== false,
   rate: Number(r.rate ?? 0),
   estimatedInterest: Number(r.estimated_interest ?? 0),
   status: r.status,
@@ -232,9 +236,12 @@ export async function logAudit(
 export const dataService = {
   /** Dashboard bundle. Accepts an optional date range (period selector). */
   async getDashboard(from?: string, to?: string): Promise<DashboardData> {
-    const [banks, accounts, flow, invoices, investments, projections] = await Promise.all([
-      this.getBanks(), this.getBankAccounts(), this.getCashFlow(), this.getInvoices(), this.getInvestments(), this.getProjections(),
+    const [banks, accounts, originalFlow, invoices, investments, projections] = await Promise.all([
+      this.getBanks(), this.getBankAccounts(), this.getMovementsFiltered({}), this.getInvoices(), this.getInvestments(), this.getProjections(),
     ]);
+    // Settled historical entries are displayed in their source currency. They
+    // are already reflected in bank balances and must not enter projections.
+    const flow: CashFlow[] = await convertFinancialRows(originalFlow.filter((m) => !["conciliado","pagado","cancelado","borrador"].includes(m.status)), ["amount"]);
     const future: CashFlow[] = [...flow, ...projections.filter((p) => p.status !== "cancelado" && p.status !== "borrador").map((p) => ({ ...p, bankId: p.bankId ?? "", origin: "projection" as const }))];
 
     const available = openingBalance(accounts);
@@ -280,7 +287,7 @@ export const dataService = {
       projectionWeekly: aggregateProjection(projection, "weekly"),
       projectionMonthly: aggregateProjection(projection, "monthly"),
       positions: bankPositions(banks, accounts, investments),
-      movements: recentMovements(flow, 8),
+      movements: recentMovements(originalFlow, 8),
       receivables: receivablesSummary(invoices, todayISO()),
       aging: agingBuckets(invoices, todayISO()),
       upcomingPayments: derivePayments(flow),
@@ -344,7 +351,7 @@ export const dataService = {
   },
 
   async getPayments(): Promise<Payment[]> {
-    const flow = await dataService.getCashFlow();
+    const flow = (await financialRows("cash_flow", ["amount"], (q) => q.eq("type", "expense"))).map(toCashFlow);
     return derivePayments(flow);
   },
 
@@ -390,14 +397,16 @@ export const dataService = {
     bankId?: string;
     category?: CashFlowCategory;
     type?: CashFlowType;
+    status?: string;
   }): Promise<CashFlow[]> {
-    const data = await financialRows("cash_flow", ["amount"], (query) => {
+    const data = await readRows("cash_flow", (query) => {
     let q = query;
     if (filters.from) q = q.gte("date", filters.from);
     if (filters.to) q = q.lte("date", filters.to);
     if (filters.bankId) q = q.eq("bank_id", filters.bankId);
     if (filters.category) q = q.eq("category", filters.category);
     if (filters.type) q = q.eq("type", filters.type);
+    if (filters.status) q = q.eq("status", filters.status);
     return q;
     });
     return data.map(toCashFlow).sort((a,b) => b.date.localeCompare(a.date));

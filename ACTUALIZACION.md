@@ -1,5 +1,7 @@
 # Activar la actualización
 
+Para la corrección actual usa **sonaco-solo-base.zip → LEEME_PRIMERO.md**. La importación carga exclusivamente BASE. Este paquete incluye el código y un SQL acumulativo; reemplaza las instrucciones de los parches anteriores.
+
 Esta guía corresponde al proyecto del ZIP. No se aplicaron cambios al Supabase alojado ni se publicó una nueva versión de tu sitio.
 
 ## 1. Actualizar la base existente
@@ -66,7 +68,7 @@ El paquete incluye código fuente, dependencias fijadas mediante el lockfile, pr
 
 ## 5. Comprobar con un archivo real
 
-1. Usa primero un entorno de prueba o un lote pequeño conocido. El ZIP recibido no contenía uno de los Excel concretos que fallaban.
+1. El libro real recibido posteriormente ya fue probado en una base aislada. Consulta CORRECCION_EXCEL.md para ver el resultado y las advertencias.
 2. Descarga la plantilla o selecciona tu libro. La lectura y la vista previa no escriben datos.
 3. Compara visualmente monto, moneda, tipo y fecha con el archivo original. Ajusta cada hoja y pulsa aplicar antes de continuar.
 4. Confirma. El lote debe mostrar sus filas efectivamente aceptadas y las rechazadas, con explicación.
@@ -80,7 +82,7 @@ El paquete incluye código fuente, dependencias fijadas mediante el lockfile, pr
 | `.xlsx`, `.xlsm`, `.xls` | Se comprueba formato y contenido; no se ejecutan macros |
 | Archivos protegidos o dañados | Deben abrirse y guardarse como un libro válido sin contraseña antes de importar |
 | Hoja con una sola fila de datos | Se acepta si tiene encabezados y datos válidos |
-| Títulos antes de los encabezados | Detección en las primeras 50 filas; ajuste manual disponible |
+| Títulos antes de los encabezados | Detección en las primeras 50 filas con contenido; ajuste manual con el número de fila original |
 | `Debe` y `Haber` | Convención del flujo contable: Debe = ingreso, Haber = egreso; se permite cero en el lado no usado |
 | `Cargo` y `Abono` | Convención de cartola bancaria: Cargo = egreso, Abono = ingreso |
 | Ambas columnas con monto | Se rechaza la fila para evitar una interpretación silenciosa |
@@ -93,7 +95,7 @@ El paquete incluye código fuente, dependencias fijadas mediante el lockfile, pr
 | Monedas | CLP, USD, UF y UTM; las desconocidas se marcan como error |
 | Hoja desconocida | Se muestra para asignar destino o excluirla |
 | Conciliación | No tiene importación automática en esta revisión; se gestiona desde su módulo |
-| Tamaño | Hasta 20 MB y 20.000 filas procesadas; rangos de hoja excesivos se rechazan para evitar bloqueo |
+| Tamaño | Hasta 20 MB, 20.000 filas de datos y 2.000.000 de celdas con contenido. Las filas y columnas vacías con formato no cuentan como datos |
 
 La confirmación conserva las filas de trazabilidad y los datos normalizados. No almacena el archivo Excel original en un bucket. Guarda el original en tu repositorio documental si necesitas conservarlo.
 
@@ -108,7 +110,7 @@ Importar movimientos no recalcula automáticamente los saldos contables del banc
 | Error de lectura | Abre el archivo en Excel, elimina la contraseña si existe y guarda una copia válida; no basta cambiar la extensión |
 | Montos o tipos incorrectos en la vista previa | Ajusta el mapeo y la convención numérica, o corrige el archivo antes de confirmar |
 | “Tasa no disponible” | Configura una tasa válida en `fx_rates`; una unidad de moneda equivale a `rate_to_clp` pesos chilenos |
-| Archivo muy grande o límite de análisis | Divide el libro y elimina filas/columnas vacías con formato excesivo |
+| Archivo muy grande o límite de análisis | Los límites se aplican a datos reales. El formato vacío se ignora automáticamente; si se alcanza un límite real, hace falta ampliar la capacidad de procesamiento |
 | “Parcial” | Algunas filas se guardaron y otras requieren revisión; consulta el detalle antes de corregir y volver a importar |
 | ERP o banco sin conector | Requiere una integración real; no se generan importaciones ficticias |
 

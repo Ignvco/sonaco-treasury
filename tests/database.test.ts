@@ -14,7 +14,7 @@ before(async()=>{
     create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
-  for(const file of ["20260913024822000_schema_v1.sql","20260913062654000_data_platform_v2.sql","20260914000000000_import_integrity.sql"]){
+  for(const file of ["20260913024822000_schema_v1.sql","20260913062654000_data_platform_v2.sql","20260914000000000_import_integrity.sql","20260914010000000_sonacol_workbook.sql","20260914020000000_base_only_import.sql"]){
     let sql=await readFile(`supabase/migrations/${file}`,"utf8");
     sql=sql.replace(/^alter publication.*$/gm,""); // PGlite has no replication; unrelated to import SQL.
     await db.exec(sql);
@@ -36,3 +36,42 @@ test("database: RUT check digit K does not collapse into a numeric check digit",
 test("database: trace failure rolls back the entire request",async()=>{await assert.rejects(run("rollback.xlsx",[{...row({description:"Must rollback"}),row:"bad"}]));assert.equal((await db.query("select * from cash_flow where description='Must rollback'")).rows.length,0);assert.equal((await db.query("select * from import_batches where file_name='rollback.xlsx'")).rows.length,0);});
 test("database: read-only role cannot import or self-promote",async()=>{await db.exec(`set request.jwt.claim.sub='${reader}'`);await assert.rejects(run("forbidden.xlsx",[row()]),/rol no permite/);await assert.rejects(db.exec(`update profiles set role='administrador' where id='${reader}'`),/administrador/);await db.exec(`set request.jwt.claim.sub='${writer}'`);});
 test("database: new registrations default to consulta",async()=>{const r=await db.query("select role from profiles where id=$1",[reader]);assert.equal(r.rows[0].role,"consulta");});
+
+test("database: ledger source identity preserves equal postings and deduplicates a later file",async()=>{
+  const records=[1,2].map(i=>row({description:"Repeated ledger posting",sourceId:`ledger:occurrence:${i}`}));
+  const first=await run("repeated-ledger.xlsx",records),second=await run("repeated-ledger-next.xlsx",records);
+  assert.equal(first.imported_records,2);assert.equal(second.imported_records,0);assert.equal(second.duplicate_records,2);
+});
+const account=(changes:Record<string,unknown>={})=>({...row(),entityType:"bank_account",normalized:{bank:"Snapshot bank",ledgerCode:"TEST001",account:null,date:"2026-09-12",balance:500,reconciledBalance:500,currency:"CLP",...changes}});
+test("database: account snapshots create real balances without inventing account numbers",async()=>{
+  const batch=await run("snapshot.xlsx",[account()]);assert.equal(batch.imported_records,1);
+  const r=(await db.query("select * from bank_accounts where ledger_code='TEST001'")).rows[0];
+  assert.equal(Number(r.balance),500);assert.equal(r.account_number,null);
+});
+test("database: newer account snapshot updates once; stale and conflicting snapshots preserve it",async()=>{
+  assert.equal((await run("snapshot-new.xlsx",[account({date:"2026-09-13",balance:600})])).imported_records,1);
+  assert.equal((await run("snapshot-stale.xlsx",[account({date:"2026-09-11",balance:300})])).error_records,1);
+  assert.equal((await run("snapshot-conflict.xlsx",[account({date:"2026-09-13",balance:700})])).error_records,1);
+  const r=(await db.query("select * from bank_accounts where ledger_code='TEST001'")).rows;
+  assert.equal(r.length,1);assert.equal(Number(r[0].balance),600);
+});
+test("database: seeded Success history is explicitly unverified; deleted entities stop counting",async()=>{
+  const status=async()=> (await db.query<{s:{records:number;history:{verified:boolean;status:string}[]}}>("select get_excel_import_status() s")).rows[0].s;
+  const before=await status();assert.ok(before.history.some(h=>h.status==="Unverified"&&!h.verified));
+  const b=await run("metrics.xlsx",[row({description:"Metrics entity"})]);assert.equal(b.imported_records,1);
+  const loaded=await status();assert.equal(Number(loaded.records),Number(before.records)+1);
+  await db.exec("delete from cash_flow where description='Metrics entity'");
+  const deleted=await status();assert.equal(deleted.records,before.records);assert.ok(deleted.history.some(h=>h.verified&&h.status==="Warning"));
+});
+
+test("database: BASE upgrade recognizes a verified row from the preceding importer",async()=>{
+  const old={...row({description:"Legacy BASE bridge"}),sheet:"BANCO",row:99};
+  assert.equal((await run("old-format.xlsx",[old])).imported_records,1);
+  const next={...row({description:"Legacy BASE bridge",account:null,sourceId:"BASE:bridge:1",sourceProfile:"BASE-ONLY-test",legacySheet:"BANCO",legacyRow:99}),sheet:"BASE",row:89};
+  const result=await run("base-upgrade.xlsx",[next]);assert.equal(result.imported_records,0);assert.equal(result.duplicate_records,1);
+  assert.equal((await db.query("select count(*)::int n from cash_flow where description='Legacy BASE bridge'")).rows[0].n,1);
+});
+test("database: BASE bridge does not match a changed amount at the same old row",async()=>{
+  const next={...row({description:"Legacy BASE bridge",amount:44000,sourceId:"BASE:bridge:changed",sourceProfile:"BASE-ONLY-test",legacySheet:"BANCO",legacyRow:99}),sheet:"BASE",row:89};
+  assert.equal((await run("base-new-amount.xlsx",[next])).imported_records,1);
+});
