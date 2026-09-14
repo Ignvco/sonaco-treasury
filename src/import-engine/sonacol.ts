@@ -6,7 +6,7 @@ import type { ImportEntityType } from "@/financial-engine/types";
 import { MAX_IMPORT_ROWS, type ProcessedRecord } from "./types";
 import type { WorkSheetData } from "./pipeline";
 
-export const BASE_READER_VERSION = "BASE-ONLY-20260914-v1";
+export const BASE_READER_VERSION = "BASE-ONLY-20260914-v2";
 const text = (v: unknown) => cellText(v).trim();
 const key = (v: unknown) => text(v).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]/g, "");
 const number = (v: unknown) => cellToNumber(v);
@@ -63,7 +63,7 @@ export function readSonacol(wb: XLSX.WorkBook, name=findBaseSheet(wb.SheetNames)
     // In BASE, CTA CTE (AE) is a voucher line, not a bank account number.
     const bank=entityType==="cash_flow"?normalizeBankName(usefulText(row.F)):entityType==="investment"?normalizeBankName(usefulText(row.I)):settlementBank;
     const n:Record<string,unknown>={entityType,sourceProfile:BASE_READER_VERSION,sourceOrigin:origin,company:usefulText(row.B),ledgerCode:accountCode,
-      bank,settlementBank,account:null,description,category:classifyCategory(type,(operation??description).normalize("NFD").replace(/[\u0300-\u036f]/g,"")),
+      bank,settlementBank,operation,cutoffDate:date(ws.AE7),account:null,description,category:classifyCategory(type,(operation??description).normalize("NFD").replace(/[\u0300-\u036f]/g,"")),
       currency:currency.currency,currencyKnown:currency.known,type,amount:entityType==="invoice"||entityType==="investment"?net:Math.abs(net),debe:d,haber:h,
       voucher:usefulText(row.G),document:usefulText(row.K),reportDate:date(row.N),adjustedDate:date(row.O),originalDueDate:date(row.M)};
     const used=["A","B","P","Q","R"];

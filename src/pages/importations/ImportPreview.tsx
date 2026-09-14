@@ -1,69 +1,38 @@
 import { useState } from "react";
-import { Check, Download, Settings2, Table2 } from "lucide-react";
+import { Check, Download } from "lucide-react";
 import { DataTable } from "@/components/treasury/DataTable";
 import { SectionCard } from "@/components/treasury/SectionCard";
-import { StatusBadge } from "@/components/treasury/StatusBadge";
-import type { ImportOverrides, ImportPreview as Preview, ProcessedRecord } from "@/import-engine/types";
-import type { ImportEntityType } from "@/financial-engine/types";
-import { formatMoney } from "@/financial-engine/format";
+import { baseNumber } from "@/components/treasury/SourceBreakdown";
+import type { ImportOverrides, ImportPreview as Preview, ProcessedRecord, ImportComparisonRow } from "@/import-engine/types";
 import { downloadFile, toCSV } from "@/lib/export";
-
-const ENTITIES: Record<string, string> = { bank_account: "Cuentas y saldos", cash_flow: "Movimientos", invoice: "Facturas", customer: "Clientes", investment: "Inversiones", projection: "Proyecciones", reconciliation: "Conciliación (revisión manual)", unknown: "Sin clasificar" };
-const FIELDS: Record<string, string> = { date: "Fecha", amount: "Monto", type: "Ingreso / egreso", description: "Descripción", bank: "Banco", account: "Cuenta", currency: "Moneda", amountDebe: "Debe (ingreso contable)", amountHaber: "Haber (egreso contable)", charge: "Cargo bancario (egreso)", credit: "Abono bancario (ingreso)", document: "Documento", customer: "Cliente", rut: "RUT", issueDate: "Fecha de emisión", dueDate: "Vencimiento", startDate: "Inicio inversión", endDate: "Término inversión", rate: "Tasa", interest: "Interés", status: "Estado" };
-const LABELS: Record<string, string> = { VALID: "Listo", WARNING: "Revisar", ERROR: "No se importará", DUPLICATE: "Duplicado" };
-
-export function ImportPreview({ preview, applied, busy, onAnalyze, onConfirm, onDiscard }: {
-  preview: Preview; applied: ImportOverrides; busy: boolean;
-  onAnalyze: (overrides: ImportOverrides) => void; onConfirm: () => void; onDiscard: () => void;
+const labels={new:"Nuevas",modified:"Modificadas",unchanged:"Sin cambios",conflict:"Coincidencia ambigua",invalid:"Con errores"};
+const fields:Record<string,string>={amount:"Importe",dueDate:"Vencimiento",reportDate:"Fecha prevista",adjustedDate:"Fecha ajustada",date:"Fecha",issueDate:"Emisión",endDate:"Rescate",startDate:"Inicio",currency:"Moneda",bank:"Banco",settlementBank:"Banco de cobro",description:"Descripción",category:"Categoría",status:"Estado",rate:"Tasa",interest:"Interés",ledgerCode:"Cuenta contable",type:"Ingreso/egreso"};
+const diffs=(c:ImportComparisonRow)=>Object.entries(fields).filter(([key])=>JSON.stringify(c.before?.[key]??null)!==JSON.stringify(c.after[key]??null)).map(([key,label])=>label+": "+String(c.before?.[key]??"—")+" → "+String(c.after[key]??"—"));
+export function ImportPreview({preview,busy,onConfirm,onDiscard}:{
+ preview:Preview;applied:ImportOverrides;busy:boolean;onAnalyze:(o:ImportOverrides)=>void;onConfirm:(rows:number[])=>void;onDiscard:()=>void;
 }) {
-  const [draft, setDraft] = useState<ImportOverrides>(applied);
-  const [sheetName, setSheetName] = useState(preview.sheets[0]?.name ?? "");
-  const [filter, setFilter] = useState("");
-  const [reviewed, setReviewed] = useState(false);
-  const sheet = preview.sheets.find((s) => s.name === sheetName) ?? preview.sheets[0];
-  const dirty = JSON.stringify(draft) !== JSON.stringify(applied);
-  const change = (value: ImportOverrides[string]) => { setDraft((old) => ({ ...old, [sheet.name]: { ...old[sheet.name], ...value } })); setReviewed(false); };
-  const selected = draft[sheet?.name] ?? {};
-  const rows = preview.records.filter((r) => (!sheetName || r.sheet === sheetName) && (!filter || r.status === filter));
-  return <section className="space-y-5" aria-label="Vista previa de importación">
-    <SectionCard title="Revisa los datos antes de importar" subtitle={preview.fileName} action={<span className="rounded-full bg-brand-soft px-3 py-1 text-xs font-semibold text-brand">Paso 2 de 3</span>}>
-      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[ ["Listos", preview.valid, "text-success"], ["Con advertencias", preview.warning, "text-amber-700"], ["Con errores", preview.error, "text-danger"], ["Duplicados", preview.duplicate, "text-muted-foreground"] ].map(([label, count, tone]) => <div key={label} className="rounded-xl border bg-muted/40 px-4 py-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>{count}</p></div>)}
-      </div>
-      {preview.total === 0 && <p role="alert" className="mb-4 rounded-xl bg-warning-soft p-4 text-sm text-amber-900">No se encontraron filas de datos. Revisa la fila de encabezados y las hojas seleccionadas.</p>}
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="grid min-w-0 flex-1 gap-1.5 text-xs font-medium">Hoja del archivo<select className="t-input w-full min-w-0" value={sheetName} onChange={(e) => setSheetName(e.target.value)}>{preview.sheets.map((s) => <option key={s.name} value={s.name}>{s.name} · {s.dataRows} filas</option>)}</select></label>
-        <label className="grid gap-1.5 text-xs font-medium">Mostrar<select className="t-input" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="">Todos los registros</option>{Object.entries(LABELS).map(([v, text]) => <option key={v} value={v}>{text}</option>)}</select></label>
-        <button className="t-button-secondary" onClick={() => downloadFile(toCSV(preview.records.filter((r) => r.status !== "VALID").map((r) => ({ Hoja: r.sheet, Fila: r.row, Estado: LABELS[r.status], Detalle: r.warnings }))), "revision-importacion.csv", "text/csv;charset=utf-8")}><Download size={15} /> Descargar revisión</button>
-      </div>
-      {sheet?.profile && <p className="my-4 rounded-xl bg-brand-soft p-4 text-sm"><strong>Formato {sheet.profile}.</strong> {sheet.note}</p>}
-      {sheet && !sheet.profile && <details className="my-4 rounded-xl border bg-slate-50/70 p-4">
-        <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold"><Settings2 size={16} /> Ajustar hoja y columnas <span className="ml-auto text-xs font-normal text-muted-foreground">{ENTITIES[sheet.entityType]}</span></summary>
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Si la detección no coincide con tu archivo, indica dónde están los encabezados y qué representa cada columna. Debe/Haber usa la convención contable; Cargo/Abono usa la cartola bancaria.</p>
-        <div className="my-4 grid gap-3 sm:grid-cols-3">
-          <label className="grid gap-1 text-xs">Destino<select className="t-input" value={selected.entityType ?? sheet.entityType} onChange={(e) => change({ entityType: e.target.value as ImportEntityType })}>{Object.entries(ENTITIES).map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>
-          <label className="grid gap-1 text-xs">Fila de encabezados<input type="number" min={1} max={1048576} className="t-input" value={selected.headerIndex ?? sheet.headerIndex} onChange={(e) => change({ headerIndex: Math.max(1, Number(e.target.value)), mapping: {} })} /></label>
-          <label className="grid gap-1 text-xs">Formato de números escritos como texto<select className="t-input" value={selected.numberLocale ?? "es-CL"} onChange={(e) => change({ numberLocale: e.target.value as "es-CL" | "en-US" })}><option value="es-CL">Chile: 1.234,56</option><option value="en-US">EE. UU.: 1,234.56</option></select></label>
-          <label className="flex items-center gap-2 self-end py-2 text-sm"><input type="checkbox" checked={!!selected.skip} onChange={(e) => change({ skip: e.target.checked })} /> Omitir esta hoja</label>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Object.entries(FIELDS).map(([key, text]) => <label key={key} className="grid gap-1 text-xs">{text}<select className="t-input w-full min-w-0" disabled={!!selected.skip} value={selected.mapping?.[key] ?? sheet.columns.find((c) => c.key === key)?.index ?? -1} onChange={(e) => change({ mapping: { ...selected.mapping, [key]: Number(e.target.value) } })}><option value={-1}>Sin asignar</option>{sheet.headers?.map((h, index) => <option key={index} value={index}>{index + 1}. {h || "Sin encabezado"}</option>)}</select></label>)}</div>
-        <button disabled={!dirty || busy} className="t-button-secondary mt-4" onClick={() => onAnalyze(draft)}><Table2 size={15} /> Aplicar y volver a analizar</button>
-      </details>}
-      {dirty && <p role="alert" className="mb-4 rounded-xl bg-warning-soft p-3 text-sm text-amber-900">Hay cambios de configuración pendientes. Aplica los cambios para actualizar la vista previa.</p>}
-      <DataTable<ProcessedRecord> data={rows} rowKey={(r) => `${r.sheet}-${r.row}`} pageSize={6} search searchText={(r) => `${r.row} ${r.normalized.description} ${r.normalized.customer} ${r.warnings}`} columns={[
-        { key: "row", header: "Fila", render: (r) => r.row },
-        { key: "detail", header: "Descripción / cliente", className: "!whitespace-normal min-w-[170px] max-w-[280px]", render: (r) => String(r.normalized.description || r.normalized.customer || r.normalized.document || "—") },
-        { key: "date", header: "Fecha", render: (r) => String(r.normalized.date || r.normalized.issueDate || r.normalized.startDate || "—") },
-        { key: "type", header: "Tipo", render: (r) => r.entityType === "cash_flow" || r.entityType === "projection" ? (r.normalized.type === "expense" ? "Egreso" : "Ingreso") : ENTITIES[r.entityType] },
-        { key: "amount", header: "Monto original", align: "right", render: (r) => typeof (r.normalized.amount ?? r.normalized.balance) === "number" ? formatMoney((r.normalized.amount ?? r.normalized.balance) as number, r.normalized.currency as "CLP") : "—" },
-        { key: "status", header: "Estado", render: (r) => <StatusBadge label={LABELS[r.status]} tone={r.status === "VALID" ? "success" : r.status === "ERROR" ? "danger" : r.status === "WARNING" ? "warning" : "muted"} /> },
-        { key: "warnings", header: "Detalle", className: "!whitespace-normal min-w-[230px] max-w-[340px]", render: (r) => <span className="text-xs text-muted-foreground">{r.warnings || "Validación correcta"}</span> },
-      ]} />
-      {(preview.warning > 0 || preview.error > 0 || preview.duplicate > 0) && <label className="mt-5 flex items-start gap-2 rounded-xl bg-muted/70 p-4 text-sm"><input className="mt-1" type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /><span>Revisé las advertencias. Se importarán las filas listas y las que tienen advertencias; los errores y duplicados quedarán fuera.</span></label>}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-5">
-        <p className="text-xs text-muted-foreground">La validación final y la detección de duplicados se confirman al guardar.</p>
-        <div className="flex gap-2"><button className="t-button-secondary" disabled={busy} onClick={onDiscard}>Descartar</button><button className="t-button-primary" disabled={busy || dirty || preview.valid + preview.warning === 0 || ((preview.warning + preview.error + preview.duplicate) > 0 && !reviewed)} onClick={onConfirm}><Check size={16} /> Importar {preview.valid + preview.warning} filas</button></div>
-      </div>
-    </SectionCard>
-  </section>;
+ const comparison=preview.comparison?.rows??[];
+ const [selected,setSelected]=useState<number[]>(comparison.filter(r=>r.change==="modified").map(r=>r.row));
+ const [filter,setFilter]=useState(""),[reviewed,setReviewed]=useState(false);
+ const byRow=new Map(comparison.map(r=>[r.row,r]));
+ const data=preview.records.filter(r=>!filter||byRow.get(r.row)?.change===filter);
+ const newCount=comparison.filter(r=>r.change==="new").length;
+ const accepted=newCount+selected.length;
+ const exportReview=()=>downloadFile(toCSV(comparison.map(c=>({Fila:c.row,Estado:labels[c.change],Cambios:diffs(c).join(" · "),Detalle:c.reason??""}))),"revision-cambios-base.csv","text/csv;charset=utf-8");
+ return <section aria-label="Vista previa de importación"><SectionCard title="Compara tu Excel antes de actualizar" subtitle={preview.fileName}>
+  <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{Object.entries(labels).map(([key,label])=><button key={key} className={`rounded-xl border p-4 text-left ${filter===key?"border-brand bg-brand-soft":"bg-slate-50"}`} onClick={()=>setFilter(filter===key?"":key)}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold tabular-nums">{comparison.filter(c=>c.change===key).length}</p></button>)}</div>
+  <p className="mb-4 rounded-xl bg-brand-soft p-4 text-sm">Solo se lee BASE. Los registros nuevos se añaden; las modificaciones seleccionadas actualizan el mismo registro y conservan su historial. Las filas ambiguas y los errores se mantienen pendientes.</p>
+  <div className="mb-4 flex flex-wrap gap-3"><button className="t-button-secondary" onClick={()=>setFilter("")}>Mostrar todas</button><button className="t-button-secondary" onClick={exportReview}><Download size={15}/> Descargar comparación</button></div>
+  <DataTable<ProcessedRecord> data={data} rowKey={r=>String(r.row)} pageSize={8} search searchText={r=>r.row+" "+r.normalized.description+" "+r.normalized.customer+" "+r.normalized.document} columns={[
+   {key:"row",header:"Fila BASE",render:r=>r.row,sortValue:r=>r.row},
+   {key:"kind",header:"Origen",render:r=>String(r.normalized.sourceOrigin??r.entityType)},
+   {key:"detail",header:"Descripción / cliente",className:"!whitespace-normal min-w-[180px] max-w-[280px]",render:r=>String(r.normalized.customer||r.normalized.description||"—")},
+   {key:"amount",header:"Importe",align:"right",render:r=>baseNumber(Number(r.normalized.amount??0))+" "+r.normalized.currency},
+   {key:"change",header:"Resultado",render:r=>labels[byRow.get(r.row)?.change??"invalid"]},
+   {key:"diff",header:"Cambios y observaciones",className:"!whitespace-normal min-w-[260px] max-w-[400px]",render:r=>{const c=byRow.get(r.row);return <div className="space-y-1 text-xs">{c?.change==="modified"&&diffs(c).map(d=><p key={d}>{d}</p>)}<p className="text-muted-foreground">{c?.reason||r.warnings||"Validación correcta"}</p></div>;}},
+   {key:"apply",header:"Aplicar",render:r=>byRow.get(r.row)?.change==="modified"?<input type="checkbox" aria-label={"Aplicar cambio fila "+r.row} checked={selected.includes(r.row)} disabled={busy} onChange={e=>{setSelected(s=>e.target.checked?[...s,r.row]:s.filter(n=>n!==r.row));setReviewed(false);}}/>:byRow.get(r.row)?.change==="new"?"Se añadirá":"—"},
+  ]}/>
+  <label className="my-5 flex items-start gap-3 rounded-xl border p-4 text-sm"><input className="mt-1" type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)}/><span>Revisé la comparación y sus advertencias. Se añadirán {newCount} filas y se actualizarán {selected.length}. Los registros sin cambios se conservarán.</span></label>
+  <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><p className="text-xs text-muted-foreground">Si alguien modifica los datos antes de guardar, deberás volver a analizar el archivo.</p><div className="flex gap-2"><button disabled={busy} className="t-button-secondary" onClick={onDiscard}>Descartar</button><button disabled={busy||!reviewed||!preview.comparison||!preview.total} className="t-button-primary" onClick={()=>onConfirm(selected)}><Check size={15}/>{accepted?"Aplicar "+accepted+" cambios":"Confirmar revisión sin cambios"}</button></div></div>
+ </SectionCard></section>;
 }

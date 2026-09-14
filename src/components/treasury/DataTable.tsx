@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSavedFilters } from "@/hooks/use-saved-filters";
 import type { ReactNode } from "react";
 import {
   ArrowDown,
@@ -22,6 +23,7 @@ export interface DataColumn<T> {
 }
 
 interface DataTableProps<T> {
+  storageKey?: string;
   columns: DataColumn<T>[];
   data: T[];
   rowKey: (row: T) => string;
@@ -48,11 +50,12 @@ export function DataTable<T>({
   emptyTitle = "Sin registros",
   emptyDescription = "No hay información para mostrar en esta tabla.",
   defaultSort,
+  storageKey = "",
 }: DataTableProps<T>) {
-  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(
-    defaultSort ?? null,
-  );
-  const [query, setQuery] = useState("");
+  const [preferences,setPreferences]=useSavedFilters(storageKey ? "table:"+storageKey : "", {query:"",sortKey:defaultSort?.key??"",sortDir:defaultSort?.dir??"asc"});
+  const sort=preferences.sortKey?{key:preferences.sortKey,dir:preferences.sortDir as "asc"|"desc"}:null;
+  const query=preferences.query;
+  const setQuery=(value:string)=>setPreferences(p=>({...p,query:value}));
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -83,18 +86,13 @@ export function DataTable<T>({
 
   const toggleSort = (col: DataColumn<T>) => {
     if (!col.sortValue) return;
-    setSort((prev) => {
-      if (prev?.key === col.key) {
-        return { key: col.key, dir: prev.dir === "asc" ? "desc" : "asc" };
-      }
-      return { key: col.key, dir: "asc" };
-    });
+    setPreferences(p=>({...p,sortKey:col.key,sortDir:p.sortKey===col.key&&p.sortDir==="asc"?"desc":"asc"}));
     setPage(1);
   };
 
   const resetFilters = () => {
     setQuery("");
-    setSort(null);
+    setPreferences(p=>({...p,sortKey:"",sortDir:"asc"}));
     setPage(1);
   };
 
@@ -116,9 +114,9 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className="max-w-full overflow-x-auto rounded-[16px] border border-[#EAEAEA]">
+      <div className="max-h-[560px] max-w-full overflow-auto rounded-[16px] border border-[#EAEAEA]">
         <table className="w-full border-collapse text-left">
-          <thead className="bg-slate-50/80">
+          <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
             <tr className="border-b border-[#EAEAEA]">
               {columns.map((col) => (
                 <th

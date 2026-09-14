@@ -14,7 +14,7 @@ before(async()=>{
     create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
-  for(const file of ["20260913024822000_schema_v1.sql","20260913062654000_data_platform_v2.sql","20260914000000000_import_integrity.sql","20260914010000000_sonacol_workbook.sql","20260914020000000_base_only_import.sql"]){
+  for(const file of ["20260913024822000_schema_v1.sql","20260913062654000_data_platform_v2.sql","20260914000000000_import_integrity.sql","20260914010000000_sonacol_workbook.sql","20260914020000000_base_only_import.sql","20260914030000000_base_treasury_v6.sql"]){
     let sql=await readFile(`supabase/migrations/${file}`,"utf8");
     sql=sql.replace(/^alter publication.*$/gm,""); // PGlite has no replication; unrelated to import SQL.
     await db.exec(sql);
@@ -74,4 +74,50 @@ test("database: BASE upgrade recognizes a verified row from the preceding import
 test("database: BASE bridge does not match a changed amount at the same old row",async()=>{
   const next={...row({description:"Legacy BASE bridge",amount:44000,sourceId:"BASE:bridge:changed",sourceProfile:"BASE-ONLY-test",legacySheet:"BANCO",legacyRow:99}),sheet:"BASE",row:89};
   assert.equal((await run("base-new-amount.xlsx",[next])).imported_records,1);
+});
+
+const baseRow=(changes:Record<string,unknown>={},kind="cash_flow",index=9)=>{
+ const n={entityType:kind,sourceProfile:"BASE-ONLY-test",sourceOrigin:kind==="cash_flow"?"BANCO":kind==="invoice"?"CLIENTES":"MANUAL",company:"TEST",ledgerCode:"TEST-LEDGER",bank:"BASE Test Bank",currency:"CLP",type:"income",amount:1200,date:"2026-09-10",description:"BASE daily test",...changes};
+ return {...row(),sheet:"BASE",row:index,entityType:kind,normalized:{...n,sourceId:JSON.stringify(n)+":"+index},raw:{["R"+index]:{value:n.amount}}};
+};
+const compareBase=async(rows:unknown[]) => (await db.query<{result:{revision:string;rows:{row:number;change:string;entityId:string}[]}}>("select compare_base_import($1::jsonb) result",[JSON.stringify(rows)])).rows[0].result;
+const applyBase=async(name:string,rows:unknown[],revision:string,selected:number[]=[]) => (await db.query<{result:Record<string,unknown>}>("select import_base_changes($1,$2,$3::jsonb,$4,$5::int[]) result",[name,hash(name),JSON.stringify(rows),revision,selected])).rows[0].result;
+test("BASE v6: first upload and repeat preserve entity IDs and native totals",async()=>{
+ const r=baseRow();const plan=await compareBase([r]);assert.equal(plan.rows[0].change,"new");
+ const saved=await applyBase("v6-first.xlsx",[r],plan.revision);assert.equal(saved.imported_records,1);
+ const again=await compareBase([r]);assert.equal(again.rows[0].change,"unchanged");
+ const repeated=await applyBase("v6-repeat.xlsx",[r],again.revision);assert.equal(repeated.imported_records,0);assert.equal(repeated.duplicate_records,1);
+ const traces=await db.query("select * from base_current_records where entity_id=$1",[again.rows[0].entityId]);assert.equal(traces.rows.length,1);assert.equal(traces.rows[0].source_row,9);
+});
+test("BASE v6: invoice amount and due date update in place only after selection",async()=>{
+ const fields={customer:"BASE Invoice Client",rut:"11222333-K",document:"V6-001",issueDate:"2026-09-01",dueDate:"2026-09-20",reportDate:"2026-09-25"};
+ const original=baseRow(fields,"invoice",5767),first=await compareBase([original]);await applyBase("v6-invoice.xlsx",[original],first.revision);
+ const changed=baseRow({...fields,amount:1800,dueDate:"2026-09-21",reportDate:"2026-09-26"},"invoice",5767);
+ const plan=await compareBase([changed]);assert.equal(plan.rows[0].change,"modified");const id=plan.rows[0].entityId;
+ const skip=await applyBase("v6-invoice-skip.xlsx",[changed],plan.revision,[]);assert.equal(skip.imported_records,0);
+ const fresh=await compareBase([changed]);await applyBase("v6-invoice-update.xlsx",[changed],fresh.revision,[5767]);
+ const invoice=(await db.query("select * from invoices where id=$1",[id])).rows[0];assert.equal(Number(invoice.amount),1800);assert.equal(invoice.due_date,"2026-09-21");
+ assert.equal((await compareBase([changed])).rows[0].change,"unchanged");
+ assert.equal((await db.query("select count(*)::int n from invoices where document='V6-001'")).rows[0].n,1);
+});
+test("BASE v6: stale preview cannot overwrite another edit",async()=>{
+ const r=baseRow({description:"CAS test"}),first=await compareBase([r]);await applyBase("v6-cas.xlsx",[r],first.revision);
+ const changed=baseRow({description:"CAS test",amount:1500}),plan=await compareBase([changed]);
+ await db.query("update cash_flow set amount=1300 where id=$1",[plan.rows[0].entityId]);
+ await assert.rejects(applyBase("v6-cas-stale.xlsx",[changed],plan.revision,[9]),/cambiaron/);
+ assert.equal((await db.query("select * from import_batches where file_name='v6-cas-stale.xlsx'")).rows.length,0);
+});
+test("BASE v6: equal postings stay distinct; ambiguous edits are not guessed",async()=>{
+ const records=[10,11].map(i=>baseRow({description:"Equal postings v6"}, "cash_flow",i));
+ const first=await compareBase(records);await applyBase("v6-equal.xlsx",records,first.revision);
+ const same=await compareBase(records);assert.deepEqual(same.rows.map(r=>r.change),["unchanged","unchanged"]);
+ const changed=[10,11].map(i=>baseRow({description:"Equal postings v6",amount:1400},"cash_flow",i));
+ const plan=await compareBase(changed);assert.deepEqual(plan.rows.map(r=>r.change),["conflict","conflict"]);
+ const applied=await applyBase("v6-ambiguous.xlsx",changed,plan.revision,[10,11]);assert.equal(applied.imported_records,0);assert.equal(applied.error_records,2);
+});
+test("BASE v6: consultation users cannot apply changes",async()=>{
+ const records=[baseRow({description:"Read only v6"})];
+ await db.exec(`set request.jwt.claim.sub='${reader}'`);
+ try{const p=await compareBase(records);await assert.rejects(applyBase("v6-forbidden.xlsx",records,p.revision),/rol no permite/);}
+ finally{await db.exec(`set request.jwt.claim.sub='${writer}'`);}
 });

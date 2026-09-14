@@ -59,6 +59,11 @@ export interface SheetOverride {
   skip?: boolean;
 }
 export type ImportOverrides = Record<string, SheetOverride>;
-export interface ImportPreview extends ImportSummary { fileHash: string; }
+export interface ImportComparisonRow {
+ row:number; change:"new"|"modified"|"unchanged"|"conflict"|"invalid"; entityId:string|null;
+ before:Record<string,unknown>|null; after:Record<string,unknown>; reason:string|null;
+}
+export interface ImportComparison {revision:string;rows:ImportComparisonRow[];}
+export interface ImportPreview extends ImportSummary { fileHash: string; comparison?:ImportComparison; }
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 20000;
