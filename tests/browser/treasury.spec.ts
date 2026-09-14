@@ -18,8 +18,13 @@ async function setup(page:Page, role="tesoreria", rpcError=false) {
     const url=new URL(route.request().url());
     if(url.pathname.includes("/auth/v1/")) return route.fulfill({json:user});
     const table=url.pathname.split("/").at(-1);
+    if(table==="get_base_treasury_snapshot") return route.fulfill({json:{traces:[],projections:[],links:[],banks:[],latest_batch:null}});
     if(table==="get_excel_import_status") return route.fulfill({json:{records:0,errors:0,last_sync_at:null,history:[]}});
-    if(table==="import_treasury_records") {
+    if(table==="compare_base_import") {
+      const body=route.request().postDataJSON();
+      return route.fulfill({json:{revision:"test-revision",rows:body.p_records.map((r:Record<string,unknown>)=>({row:r.row,change:"new",entityId:null,before:null,after:r.normalized,reason:null}))}});
+    }
+    if(table==="import_base_changes") {
       if(rpcError) return route.fulfill({status:404,json:{code:"PGRST202",message:"Function not found"}});
       const body=route.request().postDataJSON();
       saved=body.p_records.map((r:Record<string,unknown>,i:number)=>({id:String(i),import_batch_id:"batch-1",source_sheet:r.sheet,source_row:r.row,status:r.status,entity_type:r.entityType,entity_id:`entity-${i}`,normalized_json:r.normalized,raw_json:r.raw,warnings:r.warnings}));
@@ -32,7 +37,7 @@ async function setup(page:Page, role="tesoreria", rpcError=false) {
       banks:[{id:"b1",name:"Banco de Chile",status:"activo"},{id:"b2",name:"Banco BCI",status:"activo"},{id:"b3",name:"Banco Santander",status:"activo"}],
       bank_accounts:[{id:"a1",bank_id:"b1",account_number:"0012345678",currency:"CLP",balance:45000000,reconciled_balance:45000000},{id:"a2",bank_id:"b2",account_number:"0098765432",currency:"CLP",balance:18500000,reconciled_balance:18500000},{id:"a3",bank_id:"b3",account_number:"0045678912",currency:"CLP",balance:12800000,reconciled_balance:12750000}],
       cash_flow:[{id:"cf1",date:new Date().toISOString().slice(0,10),type:"income",category:"collection",description:"Cobro de factura · Cliente de prueba",amount:3500000,currency:"CLP",bank_id:"b1",status:"programado"}],
-      invoices:[],investments:[],customers:[],projections:[],reconciliations:[],
+      invoices:[],investments:[],customers:[],projections:[],reconciliations:[],base_current_records:[],forecast_links:[],
     };
     let data=fixtures[table??""]??[];
     if(table==="profiles" && !url.searchParams.has("id")) data=[fixtures.profiles];
@@ -45,21 +50,22 @@ test("real browser worker reads BASE, previews and commits a batch", async({page
   await page.goto("/importations");await expect(page.getByRole("heading",{name:"Importaciones",exact:true})).toBeVisible();
   await mkdir("docs/screenshots",{recursive:true});await page.screenshot({animations:"disabled",path:"docs/screenshots/importaciones-desktop.png",fullPage:true});
   await page.getByLabel("Seleccionar archivo Excel").setInputFiles({name:"movimientos.xlsx",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",buffer:excel()});
-  await expect(page.getByRole("heading",{name:"Revisa los datos antes de importar"})).toBeVisible();
-  await expect(page.getByText("BASE-ONLY-20260914-v1",{exact:false}).first()).toBeVisible();
-  await expect(page.getByRole("button",{name:"Importar 2 filas"})).toBeEnabled();
+  await expect(page.getByRole("heading",{name:"Compara tu Excel antes de actualizar"})).toBeVisible();
+  await expect(page.getByText("BASE-ONLY-20260914-v2",{exact:false}).first()).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await expect(page.getByRole("button",{name:"Aplicar 2 cambios"})).toBeEnabled();
   await page.screenshot({animations:"disabled",path:"docs/screenshots/vista-previa-desktop.png",fullPage:true});
-  await page.getByRole("button",{name:"Importar 2 filas"}).click();
+  await page.getByRole("button",{name:"Aplicar 2 cambios"}).click();
   await expect(page.getByText("Importación confirmada",{exact:true})).toBeVisible();
   await expect(page.getByText("Detalle — movimientos.xlsx")).toBeVisible();expect(errors).toEqual([]);
 });
 test("drag and drop works; errors remain visible and rows are not saved early",async({page})=>{
   await setup(page);await page.goto("/importations");await page.getByTestId("excel-dropzone").waitFor();
   const transfer=await page.evaluateHandle((bytes)=>{const dt=new DataTransfer();dt.items.add(new File([new Uint8Array(bytes)],"dropped.xlsx",{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));return dt;},Array.from(excel()));
-  await page.getByTestId("excel-dropzone").dispatchEvent("drop",{dataTransfer:transfer});await expect(page.getByRole("button",{name:"Importar 2 filas"})).toBeVisible();await expect(page.getByText("Completado",{exact:true})).toHaveCount(0);
+  await page.getByTestId("excel-dropzone").dispatchEvent("drop",{dataTransfer:transfer});await expect(page.getByRole("button",{name:"Aplicar 2 cambios"})).toBeVisible();await expect(page.getByText("Completado",{exact:true})).toHaveCount(0);
 });
 test("missing migration shows an actionable error and preserves preview",async({page})=>{
-  await setup(page,"tesoreria",true);await page.goto("/importations");await page.getByLabel("Seleccionar archivo Excel").setInputFiles({name:"error.xlsx",mimeType:"application/octet-stream",buffer:excel()});await page.getByRole("button",{name:"Importar 2 filas"}).click();await expect(page.getByRole("alert")).toContainText("Falta actualizar la base de datos");await expect(page.getByRole("button",{name:"Importar 2 filas"})).toBeEnabled();
+  await setup(page,"tesoreria",true);await page.goto("/importations");await page.getByLabel("Seleccionar archivo Excel").setInputFiles({name:"error.xlsx",mimeType:"application/octet-stream",buffer:excel()});await page.getByRole("checkbox").check();await page.getByRole("button",{name:"Aplicar 2 cambios"}).click();await expect(page.getByRole("alert")).toContainText("Falta actualizar la base de datos");await expect(page.getByRole("button",{name:"Aplicar 2 cambios"})).toBeEnabled();
 });
 test("mobile pages fit the viewport and all modules are reachable",async({page})=>{
   await setup(page);await page.setViewportSize({width:390,height:844});await page.goto("/importations");await expect(page.getByRole("heading",{name:"Importaciones",exact:true})).toBeVisible();await page.screenshot({animations:"disabled",path:"docs/screenshots/importaciones-mobile.png",fullPage:true});
@@ -71,4 +77,13 @@ test("all treasury routes render without runtime errors",async({page})=>{
   await setup(page);const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
   for(const route of ["dashboard","cashflow","banks","receivables","payments","investments","projections","reconciliation","reports","settings","integrations"]){await page.goto(`/${route}`);await expect(page.locator("main h1")).toBeVisible();await expect(page.getByText("Unexpected Application Error!",{exact:true})).toHaveCount(0);if(route==="dashboard") await page.screenshot({animations:"disabled",path:"docs/screenshots/dashboard-desktop.png",fullPage:true});}
   expect(errors).toEqual([]);
+});
+
+test("dashboard filters survive reload and financial breakdown opens on mobile",async({page})=>{
+ await setup(page);await page.setViewportSize({width:390,height:844});await page.goto("/dashboard");
+ await expect(page.getByRole("heading",{name:"Resumen de caja"})).toBeVisible();
+ await page.getByLabel("Horizonte").selectOption("7");await page.reload();await expect(page.getByLabel("Horizonte")).toHaveValue("7");
+ await page.getByRole("button",{name:/Caja disponible.*Ver desglose/}).click();await expect(page.getByRole("dialog")).toBeVisible();
+ await page.getByRole("button",{name:"Close",exact:true}).click();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });

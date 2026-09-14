@@ -8,6 +8,8 @@
 // The generated Database type does not include treasury tables yet,
 // so the client is used untyped here, contained to this data layer.
 
+import { baseTreasuryService } from "./baseTreasuryService";
+import { baseTreasury, nextDate, total, type TreasuryRow } from "@/financial-engine/base-treasury";
 import { amountInClp } from "@/financial-engine/currency";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -236,16 +238,26 @@ export async function logAudit(
 export const dataService = {
   /** Dashboard bundle. Accepts an optional date range (period selector). */
   async getDashboard(from?: string, to?: string): Promise<DashboardData> {
-    const [banks, accounts, originalFlow, invoices, investments, projections] = await Promise.all([
-      this.getBanks(), this.getBankAccounts(), this.getMovementsFiltered({}), this.getInvoices(), this.getInvestments(), this.getProjections(),
+    const [banks, originalFlow, bundle] = await Promise.all([
+      this.getBanks(), this.getMovementsFiltered({}), baseTreasuryService.load(),
     ]);
-    // Settled historical entries are displayed in their source currency. They
-    // are already reflected in bank balances and must not enter projections.
-    const flow: CashFlow[] = await convertFinancialRows(originalFlow.filter((m) => !["conciliado","pagado","cancelado","borrador"].includes(m.status)), ["amount"]);
-    const future: CashFlow[] = [...flow, ...projections.filter((p) => p.status !== "cancelado" && p.status !== "borrador").map((p) => ({ ...p, bankId: p.bankId ?? "", origin: "projection" as const }))];
-
+    const [invoices,investments] = await Promise.all([this.getInvoices(bundle.rows),this.getInvestments(bundle.rows)]);
+    // Legacy consolidated reports use CLP entries. Dashboard/Banks expose BASE
+    // literal values and a native-currency selector without inventing FX rates.
+    const base = baseTreasury(bundle.rows, bundle.links, bundle.cutoff, 366, "CLP");
+    const accounts: BankAccount[] = base.positions.map(p => ({
+      id:p.key,bankId:banks.find(b=>b.name===p.bank)?.id??p.bank,accountNumber:p.ledger,
+      currency:"CLP",status:"activo",balance:p.amount,reconciledBalance:0,lastReconciliation:bundle.cutoff,
+    }));
+    const flow: CashFlow[] = base.events.map(r=>({
+      id:r.kind+":"+r.id,date:r.effectiveDate,type:r.signed<0?"expense":"income",
+      category:r.kind==="invoice"?"collection":r.kind==="investment"?"investment_redemption":r.signed<0?"supplier":"other_income",
+      description:r.description,amount:Math.abs(r.signed),currency:"CLP",
+      bankId:banks.find(b=>b.name===r.bank)?.id??"",status:"proyectado",origin:"excel",
+    }));
+    const future = flow;
     const available = openingBalance(accounts);
-    const invested = activeInvestments(investments);
+    const invested = base.invested;
 
     let projection;
     let collections;
@@ -257,16 +269,19 @@ export const dataService = {
         Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000) + 1,
       );
       if (!Number.isFinite(days) || days > 366) throw new Error("Selecciona un período válido de hasta 366 días.");
-      projection = projectCashFlow(future, accounts, days, from);
-      collections = movementsBetween(future.filter((m) => !["conciliado", "pagado", "borrador", "cancelado"].includes(m.status)), from, to, "income", ["collection"]).reduce(
+      const carry = total(future.filter(m=>m.date<from).map(m=>m.type==="expense"?-m.amount:m.amount));
+      const projectedOpening:BankAccount[] = [{id:"opening",bankId:"",accountNumber:"",currency:"CLP",status:"activo",balance:available+carry,reconciledBalance:0,lastReconciliation:bundle.cutoff}];
+      projection = projectCashFlow(future, projectedOpening, days, from);
+      collections = movementsBetween(future.filter((m) => !["conciliado", "pagado", "borrador", "cancelado"].includes(m.status)), from, to, "income").reduce(
         (a, m) => a + m.amount,
         0,
       );
       payments = movementsBetween(future.filter((m) => !["conciliado", "pagado", "borrador", "cancelado"].includes(m.status)), from, to, "expense").reduce((a, m) => a + m.amount, 0);
     } else {
-      projection = projectCashFlow(future, accounts, 30);
-      collections = expectedCollections(future, 30);
-      payments = expectedPayments(future, 30);
+      const start=nextDate(bundle.cutoff,1),end=nextDate(bundle.cutoff,30);
+      projection = projectCashFlow(future, accounts, 30, start);
+      collections = total(movementsBetween(future,start,end,"income").map(r=>r.amount));
+      payments = total(movementsBetween(future,start,end,"expense").map(r=>r.amount));
     }
 
     const projectedCash =
@@ -286,7 +301,7 @@ export const dataService = {
       projection,
       projectionWeekly: aggregateProjection(projection, "weekly"),
       projectionMonthly: aggregateProjection(projection, "monthly"),
-      positions: bankPositions(banks, accounts, investments),
+      positions: bankPositions(banks, accounts, investments.filter(i=>base.investedRows.some(r=>r.id===i.id))),
       movements: recentMovements(originalFlow, 8),
       receivables: receivablesSummary(invoices, todayISO()),
       aging: agingBuckets(invoices, todayISO()),
@@ -338,16 +353,25 @@ export const dataService = {
     return (await readRows("customers")).map(toCustomer);
   },
 
-  async getInvoices(): Promise<Invoice[]> {
-    return (await financialRows("invoices", ["amount"])).map(toInvoice);
+  async getInvoices(currentRows?:TreasuryRow[]): Promise<Invoice[]> {
+    const source=currentRows??(await baseTreasuryService.load()).rows;
+    const omitted=new Set(source.filter(r=>r.kind==="invoice"&&r.inLatest===false).map(r=>r.id));
+    const rows=(await readRows("invoices")).filter(r=>!omitted.has(r.id));
+    return (await convertFinancialRows(rows, ["amount"])).map(toInvoice);
   },
 
-  async getInvestments(): Promise<Investment[]> {
-    return (await financialRows("investments", ["amount", "estimated_interest"])).map(toInvestment);
+  async getInvestments(currentRows?:TreasuryRow[]): Promise<Investment[]> {
+    const source=currentRows??(await baseTreasuryService.load()).rows;
+    const omitted=new Set(source.filter(r=>r.kind==="investment"&&r.inLatest===false).map(r=>r.id));
+    const rows=(await readRows("investments")).filter(r=>!omitted.has(r.id));
+    return (await convertFinancialRows(rows, ["amount", "estimated_interest"])).map(toInvestment);
   },
 
-  async getProjections(): Promise<Projection[]> {
-    return (await financialRows("projections", ["amount"])).map(toProjection);
+  async getProjections(currentRows?:TreasuryRow[]): Promise<Projection[]> {
+    const source=currentRows??(await baseTreasuryService.load()).rows;
+    const omitted=new Set(source.filter(r=>r.kind==="projection"&&r.inLatest===false).map(r=>r.id));
+    const rows=(await readRows("projections")).filter(r=>!omitted.has(r.id));
+    return (await convertFinancialRows(rows, ["amount"])).map(toProjection);
   },
 
   async getPayments(): Promise<Payment[]> {

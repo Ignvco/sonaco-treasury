@@ -1,6 +1,7 @@
 /** Treasury calculations use BASE's signed REAL values and native currencies. */
 export interface TreasuryRow {
   id: string; kind: "cash_flow" | "invoice" | "investment" | "projection";
+  inLatest?: boolean;
   origin: string; amount: number; currency: string; type: string; status: string;
   date: string; plannedDate: string; bank: string; ledger: string; description: string;
   document: string; customer: string; interest: number; cutoff: string;
@@ -9,18 +10,22 @@ export interface TreasuryRow {
 export interface ForecastLink { id: string; projection_id: string; target_kind: string; target_id: string; }
 export interface ForecastEvent extends TreasuryRow { effectiveDate: string; overdue: boolean; signed: number; replaces?: string; }
 export const total = (values: number[]) => values.reduce((sum, n) => sum + Math.round(n * 100), 0) / 100;
+export const isTreasuryDate = (date: string) => {
+ const parsed = new Date(date+"T12:00:00Z");
+ return /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0,10)===date;
+};
 export const nextDate = (date: string, days: number) => {
   const value = new Date(date + "T12:00:00Z"); value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
 };
 export const sourceKey = (r: Pick<TreasuryRow, "kind" | "id">) => r.kind + ":" + r.id;
 export function baseTreasury(input: TreasuryRow[], links: ForecastLink[], cutoff: string, horizon = 30, currency = "BASE", bank = "") {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoff) || ![7,15,30].includes(horizon)) throw new Error("Fecha u horizonte inválidos.");
+  if (!isTreasuryDate(cutoff) || (!Number.isInteger(horizon) || horizon < 1 || horizon > 366)) throw new Error("Fecha u horizonte inválidos.");
   const rows = [...new Map(input.map(r => [sourceKey(r), r])).values()];
   const matches = (r: TreasuryRow) => (currency === "BASE" || r.currency === currency) && (!bank || r.bank === bank);
   const sign = (r: TreasuryRow) => r.type === "expense" ? -r.amount : r.amount;
-  const cashRows = rows.filter(r => r.kind === "cash_flow" && r.origin === "BANCO" && r.date <= cutoff && matches(r));
-  const allFuture = rows.filter(r => r.kind !== "cash_flow" && !["pagado","rescatada","cancelado","borrador"].includes(r.status));
+  const cashRows = rows.filter(r => r.inLatest !== false && r.kind === "cash_flow" && r.origin === "BANCO" && r.date <= cutoff && matches(r));
+  const allFuture = rows.filter(r => r.inLatest !== false && (r.kind !== "cash_flow" || r.origin === "PLATAFORMA") && !["pagado","conciliado","rescatada","cancelado","borrador"].includes(r.status));
   const byKey = new Map(rows.map(r => [sourceKey(r), r]));
   const suppressed = new Set<string>();
   const replacement = new Map<string,string>();
@@ -28,8 +33,8 @@ export function baseTreasury(input: TreasuryRow[], links: ForecastLink[], cutoff
   for (const link of links) {
     const projectionKey = "projection:" + link.projection_id, targetKey = link.target_kind + ":" + link.target_id;
     const p = byKey.get(projectionKey), target = byKey.get(targetKey);
-    if (!p) continue;
-    if (!target || p.currency !== target.currency || p.type !== "income" || Math.abs(p.amount - target.amount - target.interest) > 0.005) {
+    if (!p || p.inLatest === false) continue;
+    if (target?.inLatest === false || !target || p.currency !== target.currency || p.type !== "income" || Math.abs(p.amount - target.amount - target.interest) > 0.005) {
       suppressed.add(projectionKey);
       issues.push("Revisar vínculo de " + p.description + ": cambió el registro relacionado. La proyección vinculada queda fuera del total hasta corregir el vínculo.");
     } else if (["pagado","rescatada"].includes(target.status)) {
@@ -53,9 +58,9 @@ export function baseTreasury(input: TreasuryRow[], links: ForecastLink[], cutoff
     return {key,bank:items[0].bank,ledger:items[0].ledger,currency:items[0].currency,amount:total(items.map(sign)),rows:items};
   }).sort((a,b)=>b.amount-a.amount);
   const collectionRows = events.filter(r=>r.signed>0), paymentRows=events.filter(r=>r.signed<0);
-  const investedRows = rows.filter(r=>r.kind==="investment" && !["rescatada","cancelado"].includes(r.status) && matches(r));
+  const investedRows = rows.filter(r=>r.inLatest!==false && r.kind==="investment" && !["rescatada","cancelado"].includes(r.status) && matches(r));
   return {available,cashRows,events,days,positions,collectionRows,paymentRows,investedRows,
     collections:total(collectionRows.map(r=>r.signed)),payments:total(paymentRows.map(r=>-r.signed)),
-    invested:total(investedRows.map(r=>r.amount)),projected:days.at(-1)?.balance??available,
-    overdue:events.filter(r=>r.overdue),issues,minimum:Math.min(available,...days.map(r=>r.balance))};
+    invested:total(investedRows.map(r=>r.amount)),projected:days[days.length-1]?.balance??available,
+    overdue:events.filter(r=>r.overdue),omittedRows:rows.filter(r=>r.inLatest===false),issues,minimum:Math.min(available,...days.map(r=>r.balance))};
 }

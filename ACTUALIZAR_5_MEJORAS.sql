@@ -1,3 +1,4 @@
+BEGIN;
 alter table public.import_batches add column if not exists base_snapshot_version integer;
 
 -- BASE daily updates. Additive migration after 20260914020000000.
@@ -427,3 +428,5 @@ notify pgrst,'reload schema';
 create index if not exists import_records_entity_trace_v6
  on public.import_records(entity_type,entity_id,created_at desc)
  where entity_id is not null;
+
+COMMIT;

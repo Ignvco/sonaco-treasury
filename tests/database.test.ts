@@ -77,7 +77,7 @@ test("database: BASE bridge does not match a changed amount at the same old row"
 });
 
 const baseRow=(changes:Record<string,unknown>={},kind="cash_flow",index=9)=>{
- const n={entityType:kind,sourceProfile:"BASE-ONLY-test",sourceOrigin:kind==="cash_flow"?"BANCO":kind==="invoice"?"CLIENTES":"MANUAL",company:"TEST",ledgerCode:"TEST-LEDGER",bank:"BASE Test Bank",currency:"CLP",type:"income",amount:1200,date:"2026-09-10",description:"BASE daily test",...changes};
+ const n={entityType:kind,sourceProfile:"BASE-ONLY-test",sourceOrigin:kind==="cash_flow"?"BANCO":kind==="invoice"?"CLIENTES":"MANUAL",company:"TEST",voucher:String(changes.description??"BASE daily test"),ledgerCode:"TEST-LEDGER",bank:"BASE Test Bank",currency:"CLP",type:"income",amount:1200,date:"2026-09-10",description:"BASE daily test",...changes};
  return {...row(),sheet:"BASE",row:index,entityType:kind,normalized:{...n,sourceId:JSON.stringify(n)+":"+index},raw:{["R"+index]:{value:n.amount}}};
 };
 const compareBase=async(rows:unknown[]) => (await db.query<{result:{revision:string;rows:{row:number;change:string;entityId:string}[]}}>("select compare_base_import($1::jsonb) result",[JSON.stringify(rows)])).rows[0].result;
@@ -120,4 +120,25 @@ test("BASE v6: consultation users cannot apply changes",async()=>{
  await db.exec(`set request.jwt.claim.sub='${reader}'`);
  try{const p=await compareBase(records);await assert.rejects(applyBase("v6-forbidden.xlsx",records,p.revision),/rol no permite/);}
  finally{await db.exec(`set request.jwt.claim.sub='${writer}'`);}
+});
+
+test("BASE v6: matching identical rows first permits one corrected posting regardless of row order",async()=>{
+ const a=baseRow({description:"First posting",ledgerCode:"SAME-DAY",voucher:"ORDER-SAME"},"cash_flow",28);
+ const b=baseRow({description:"Second posting",ledgerCode:"SAME-DAY",voucher:"ORDER-SAME",amount:1600},"cash_flow",29);
+ const first=await compareBase([a,b]);await applyBase("v6-order-first.xlsx",[a,b],first.revision);
+ const changed=baseRow({description:"Corrected first posting",ledgerCode:"SAME-DAY",voucher:"ORDER-SAME",amount:1300},"cash_flow",28);
+ const plan=await compareBase([changed,b]);assert.deepEqual(plan.rows.map(r=>r.change),["modified","unchanged"]);
+ const result=await applyBase("v6-order-update.xlsx",[changed,b],plan.revision,[28]);assert.equal(result.imported_records,1);
+ assert.equal((await db.query("select count(*)::int n from base_current_records where normalized_json->>'ledgerCode'='SAME-DAY'")).rows[0].n,2);
+});
+
+test("BASE v6: snapshot membership follows the last accepted workbook without deleting history",async()=>{
+ const a=baseRow({description:"Snapshot retained",ledgerCode:"SNAP-A"},"cash_flow",80);
+ const b=baseRow({description:"Snapshot absent",ledgerCode:"SNAP-B"},"cash_flow",81);
+ const first=await compareBase([a,b]);await applyBase("v6-membership-first.xlsx",[a,b],first.revision);
+ const second=await compareBase([a]);await applyBase("v6-membership-next.xlsx",[a],second.revision);
+ const snapshot=(await db.query<{s:{traces:{entity_id:string;in_latest:boolean;current_normalized:{description:string}}[]}}>("select get_base_treasury_snapshot() s")).rows[0].s;
+ assert.equal(snapshot.traces.find(r=>r.current_normalized.description==="Snapshot retained")?.in_latest,true);
+ const absent=snapshot.traces.find(r=>r.current_normalized.description==="Snapshot absent");assert.equal(absent?.in_latest,false);
+ assert.equal((await db.query("select count(*)::int n from cash_flow where id=$1",[absent?.entity_id])).rows[0].n,1);
 });

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
+import { useSavedFilters } from "@/hooks/use-saved-filters";
 import { useAsyncData } from "@/hooks/use-async";
 import { dataService } from "@/services/dataService";
 import { PageHeader } from "@/components/treasury/PageHeader";
@@ -46,7 +47,7 @@ export default function CashFlow() {
   const { data: dashboard, error: dashboardError } = useAsyncData(() => dataService.getDashboard(), [refresh]);
   const { data: banks, error: banksError } = useAsyncData(() => dataService.getBanks(), []);
   const [mode, setMode] = useState<ChartMode>("daily");
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useSavedFilters("cashflow-v6", {...EMPTY_FILTERS});
   const [open, setOpen] = useState(false);
   const { money } = useCurrency();
   const canWrite = useCanWrite();
@@ -100,6 +101,7 @@ export default function CashFlow() {
           </>
         }
       />
+      <p className="text-xs text-muted-foreground">Base de cálculo de la proyección: partidas CLP de BASE. El dashboard permite revisar la suma literal de Excel y cada moneda por separado.</p>
 
       {/* Summary KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

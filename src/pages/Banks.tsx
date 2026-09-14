@@ -1,88 +1,33 @@
-import { useMemo } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GitCompareArrows } from "lucide-react";
 import { useAsyncData } from "@/hooks/use-async";
-import { dataService } from "@/services/dataService";
+import { useSavedFilters } from "@/hooks/use-saved-filters";
+import { baseTreasuryService } from "@/services/baseTreasuryService";
+import { baseTreasury, type TreasuryRow } from "@/financial-engine/base-treasury";
+import { SourceBreakdown, baseNumber } from "@/components/treasury/SourceBreakdown";
 import { PageHeader } from "@/components/treasury/PageHeader";
-import { KpiCard } from "@/components/treasury/KpiCard";
-import { BankCard } from "@/components/treasury/BankCard";
-import { ExportMenu } from "@/components/treasury/ExportMenu";
+import { DataTable } from "@/components/treasury/DataTable";
 import { LoadingState, ErrorState, EmptyState } from "@/components/treasury/feedback";
-import { useCurrency } from "@/contexts/currency-context";
-import type { BankPosition } from "@/financial-engine/calculations";
-
+import { ExportMenu } from "@/components/treasury/ExportMenu";
 export default function Banks() {
-  const { data, loading, error } = useAsyncData(() => dataService.getBankPositions(), []);
-  const { money } = useCurrency();
-
-  const summary = useMemo(() => {
-    if (!data) return null;
-    return {
-      contable: data.reduce((a, p) => a + p.available, 0),
-      conciliado: data.reduce((a, p) => a + p.reconciled, 0),
-      invertido: data.reduce((a, p) => a + p.invested, 0),
-      enRevision: data.filter((p) => p.status === "revisar").length,
-    };
-  }, [data]);
-
-  if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={error} />;
-  if (!data || !summary) return <EmptyState />;
-
-  const exportRows = data.map((p) => ({
-    Banco: p.bank.name,
-    Cuenta: p.account?.accountNumber ?? "—",
-    "Saldo contable": p.available,
-    "Saldo conciliado": p.reconciled,
-    Diferencia: p.difference,
-    Invertido: p.invested,
-    Estado: p.status === "revisar" ? "Revisar" : "OK",
-  }));
-
-  return (
-    <div className="t-fade-in flex flex-col gap-5">
-      <PageHeader
-        title="Bancos"
-        subtitle="Cuadratura de saldos, conciliación y posición por banco"
-        actions={
-          <>
-            <Link
-              to="/reconciliation"
-              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#EAEAEA] bg-card px-3.5 text-[13px] font-semibold text-foreground transition-colors hover:border-brand/40 hover:text-brand"
-            >
-              <GitCompareArrows className="h-4 w-4" />
-              Conciliación
-            </Link>
-            <ExportMenu rows={exportRows} filename="posicion-bancaria" />
-          </>
-        }
-      />
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Saldo contable" value={summary.contable} subtext="Consolidado" icon={undefined} />
-        <KpiCard label="Saldo conciliado" value={summary.conciliado} subtext="Según cartola" />
-        <KpiCard label="Total invertido" value={summary.invertido} subtext="Colocaciones + FM" />
-        <KpiCard
-          label="En revisión"
-          value={summary.enRevision}
-          subtext={summary.enRevision > 0 ? "Bancos con diferencias" : "Sin diferencias"}
-          tone={summary.enRevision > 0 ? "warning" : "success"}
-          plain
-          icon={undefined}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {data.map((position: BankPosition) => (
-          <BankCard key={position.bank.id} position={position} />
-        ))}
-      </div>
-
-      <p className="text-[12px] text-muted-foreground">
-        Saldo proyectado disponible:{" "}
-        <span className="t-num font-semibold text-foreground">{money(summary.contable)}</span> · Última
-        conciliación registrada por cuenta. Preparado para integración bancaria futura.
-      </p>
-    </div>
-  );
+ const {data,loading,error}=useAsyncData(()=>baseTreasuryService.load(),[]);
+ const [filters,setFilters,reset]=useSavedFilters("banks-v6",{currency:"BASE",bank:""});
+ const [detail,setDetail]=useState<{title:string;rows:TreasuryRow[]}|null>(null);
+ if(loading)return <LoadingState/>;
+ if(error)return <ErrorState message={error}/>;
+ if(!data)return <EmptyState/>;
+ const model=baseTreasury(data.rows,data.links,data.cutoff,30,filters.currency,filters.bank);
+ return <div className="t-fade-in space-y-5">
+  <PageHeader title="Saldos bancarios" subtitle={"Saldo contable calculado desde BASE · corte "+data.cutoff} actions={<Link to="/reconciliation" className="t-button-secondary">Conciliación con cartola</Link>}/>
+  <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white p-4"><label className="grid gap-1 text-xs">Moneda<select className="t-input" value={filters.currency} onChange={e=>setFilters(f=>({...f,currency:e.target.value}))}><option value="BASE">Como en BASE · sin conversión</option>{[...new Set(data.rows.map(r=>r.currency))].map(c=><option key={c} value={c}>{c}</option>)}</select></label><label className="grid gap-1 text-xs">Banco<select className="t-input" value={filters.bank} onChange={e=>setFilters(f=>({...f,bank:e.target.value}))}><option value="">Todos</option>{[...new Set(data.rows.filter(r=>r.origin==="BANCO").map(r=>r.bank))].sort().map(b=><option key={b} value={b}>{b}</option>)}</select></label><button className="t-button-secondary" onClick={reset}>Restablecer</button></div>
+  {data.warning&&<p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{data.warning}</p>}
+  <button className="w-full rounded-2xl bg-brand p-6 text-left text-white" onClick={()=>setDetail({title:"Caja disponible desde BASE",rows:model.cashRows})}><p className="text-sm text-white/80">Caja disponible · suma de REAL de BANCO</p><p className="mt-2 text-3xl font-semibold tabular-nums">{baseNumber(model.available)}</p><p className="mt-3 text-xs text-white/75">{model.cashRows.length} movimientos · Ver cada fila del cálculo</p></button>
+  <section className="rounded-2xl border bg-white p-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Desglose por cuenta contable</h2><ExportMenu filename="saldos-base" rows={model.positions.map(p=>({Banco:p.bank,CuentaContable:p.ledger,Moneda:p.currency,SaldoREAL:p.amount,Corte:data.cutoff}))}/></div>
+   <DataTable data={model.positions} rowKey={p=>p.key} storageKey="banks-positions" search searchText={p=>p.bank+" "+p.ledger} pageSize={12} onRowClick={p=>setDetail({title:p.bank+" · "+p.ledger,rows:p.rows})} columns={[
+    {key:"bank",header:"Banco",sortValue:p=>p.bank},{key:"ledger",header:"Cuenta contable",sortValue:p=>p.ledger},{key:"currency",header:"Moneda"},{key:"amount",header:"Saldo REAL",align:"right",render:p=>baseNumber(p.amount),sortValue:p=>p.amount}
+   ]}/>
+  </section>
+  <p className="text-xs leading-relaxed text-muted-foreground">La apertura ya está incluida en BANCO. Los cobros de CLIENTES, COLOCACIONES y las proyecciones MANUAL se reflejan en la caja futura. La opción «Como en BASE» suma valores literales, sin convertir monedas. El código contable no es un número de cuenta bancaria.</p>
+  {detail&&<SourceBreakdown {...detail} onClose={()=>setDetail(null)}/>}
+ </div>;
 }
