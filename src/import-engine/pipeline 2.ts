@@ -5,56 +5,33 @@ import { classifyCategory, classifyType, normalizeBankName, normalizeCurrency, n
 import { MAX_IMPORT_ROWS, type DetectedColumn, type ImportSummary, type ProcessedRecord, type SheetResult, type ImportOverrides } from "./types";
 import { validateRecord } from "./validate";
 
-export interface WorkSheetData {
-  name: string;
-  rows: unknown[][];
-  /** Original 1-based Excel row numbers when blank rows have been omitted. */
-  rowNumbers?: number[];
-}
-
-const MAX_CONTENT_CELLS = 2000000;
-
-/** Formatting, comments and blank stubs are not business data. Keep formulas
- * without cached values so validation can report them instead of losing a row. */
-function hasCellContent(value: unknown): boolean {
-  if (cellText(value).trim() !== "") return true;
-  const cell = value as { f?: string; v?: unknown } | null | undefined;
-  return !!cell && typeof cell === "object" && !!cell.f && cell.v == null;
-}
+export interface WorkSheetData { name: string; rows: unknown[][]; }
 
 /** Preserve cell types, errors, leading zeros and original Excel row numbers. */
 export async function parseWorkbook(buffer: ArrayBuffer): Promise<WorkSheetData[]> {
   const bytes = new Uint8Array(buffer);
   if (!(bytes[0] === 0x50 && bytes[1] === 0x4b) && !(bytes[0] === 0xd0 && bytes[1] === 0xcf))
     throw new Error("El contenido no corresponde a un libro Excel válido. Abre el archivo en Excel y guárdalo como .xlsx.");
-  const wb = XLSX.read(buffer, {
-    type: "array", dense: false, cellDates: false, bookVBA: false,
-    cellFormula: true, sheetStubs: false, cellStyles: false,
-  });
+  const wb = XLSX.read(buffer, { type: "array", cellDates: false, bookVBA: false, cellFormula: true });
   const sheets: WorkSheetData[] = [];
   let cells = 0;
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
-    if (!ws) continue;
-    const populatedRows = new Map<number, unknown[]>();
-    // !ref may span A1:XFD1048576 solely because of formatting. Walk stored
-    // cells, never that rectangle. Column positions remain the original indices.
-    for (const address in ws) {
-      if (!Object.prototype.hasOwnProperty.call(ws, address) || !/^[A-Z]{1,3}[1-9]\d{0,6}$/.test(address)) continue;
-      const cell = ws[address] as XLSX.CellObject;
-      if (!hasCellContent(cell)) continue;
-      const { r, c } = XLSX.utils.decode_cell(address);
-      if (r > 1048575 || c > 16383) throw new Error(`La hoja “${name}” contiene una dirección de celda inválida: ${address}.`);
-      if (++cells > MAX_CONTENT_CELLS)
-        throw new Error("El libro supera 2.000.000 de celdas con contenido. El formato vacío no cuenta para este límite.");
-      let row = populatedRows.get(r);
-      if (!row) { row = []; populatedRows.set(r, row); }
-      row[c] = { t: cell.t, v: cell.v, w: cell.w, f: cell.f, date1904: !!wb.Workbook?.WBProps?.date1904 };
+    if (!ws?.["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    cells += (range.e.r + 1) * (range.e.c + 1);
+    if (range.e.r > 100000 || range.e.c > 255 || cells > 2000000)
+      throw new Error("El libro excede el área de lectura. Divide los datos o elimina filas/columnas vacías con formato.");
+    const rows: unknown[][] = [];
+    for (let r = 0; r <= range.e.r; r++) {
+      const row: unknown[] = [];
+      for (let c = 0; c <= range.e.c; c++) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        row.push(cell ? { t: cell.t, v: cell.v, w: cell.w, f: cell.f, date1904: !!wb.Workbook?.WBProps?.date1904 } : "");
+      }
+      rows.push(row);
     }
-    if (populatedRows.size) {
-      const positions = [...populatedRows.keys()].sort((a, b) => a - b);
-      sheets.push({ name, rows: positions.map((r) => populatedRows.get(r)!), rowNumbers: positions.map((r) => r + 1) });
-    }
+    if (rows.some((r) => r.some((c) => cellText(c).trim()))) sheets.push({ name, rows });
   }
   return sheets;
 }
@@ -71,9 +48,8 @@ export function processWorkbook(sheets: WorkSheetData[], onProgress?: (done: num
     onProgress?.(sheetIndex + 1, sheets.length, `Analizando hoja “${sheet.name}”…`);
     const override = overrides[sheet.name] ?? {};
     const detected = analyzeSheet(sheet.name, sheet.rows);
-    const rowNumbers = sheet.rowNumbers ?? sheet.rows.map((_, i) => i + 1);
-    const headerIndex = override.headerIndex ?? (detected ? rowNumbers[detected.headerIndex - 1] : rowNumbers[0]) ?? 1;
-    const header = sheet.rows[rowNumbers.indexOf(headerIndex)] ?? [];
+    const headerIndex = override.headerIndex ?? detected?.headerIndex ?? 1;
+    const header = sheet.rows[headerIndex - 1] ?? [];
     let columns = detectColumns(header);
     if (override.mapping) {
       for (const [key, index] of Object.entries(override.mapping)) {
@@ -86,10 +62,9 @@ export function processWorkbook(sheets: WorkSheetData[], onProgress?: (done: num
       headers: header.map(cellText), sample: sheet.rows.slice(0, 8).map((row) => row.map(cellText)) };
     sheetResults.push(analysis);
     if (override.skip) continue;
-    for (let i = 0; i < sheet.rows.length; i++) {
-      if (rowNumbers[i] <= headerIndex) continue;
+    for (let i = headerIndex; i < sheet.rows.length; i++) {
       const row = sheet.rows[i];
-      if (!Object.values(row).some(hasCellContent)) continue;
+      if (!row.some((c) => cellText(c).trim() !== "")) continue;
       analysis.dataRows++;
       const n = normalizeRow(entityType, columns, row, override.numberLocale);
       const issues = validateRecord({ ...n, entityType, currencyKnown: n.currencyKnown === true });
@@ -110,11 +85,8 @@ export function processWorkbook(sheets: WorkSheetData[], onProgress?: (done: num
       const baseStatus = issues.some((x) => x.kind === "error") ? "ERROR" : issues.length ? "WARNING" : "VALID";
       const status = baseStatus !== "ERROR" && seen.has(dedupeKey) ? "DUPLICATE" : baseStatus;
       if (status === "VALID" || status === "WARNING") seen.add(dedupeKey);
-      const raw = Object.fromEntries(Object.entries(row).map(([index, v]) => {
-        const c = Number(index);
-        return [`${cellText(header[c]) || `Columna ${c + 1}`} [${c + 1}]`, cellText(v)];
-      }));
-      records.push({ sheet: sheet.name, row: rowNumbers[i], status, entityType, normalized: n, raw,
+      const raw = Object.fromEntries(row.map((v, c) => [`${cellText(header[c]) || `Columna ${c + 1}`} [${c + 1}]`, cellText(v)]));
+      records.push({ sheet: sheet.name, row: i + 1, status, entityType, normalized: n, raw,
         warnings: status === "DUPLICATE" ? "Fila idéntica a otra del archivo." : issues.map((x) => x.message).join(" · "), dedupeKey });
       if (records.length > MAX_IMPORT_ROWS) throw new Error(`El libro supera ${MAX_IMPORT_ROWS.toLocaleString("es-CL")} filas. Divídelo en archivos más pequeños.`);
     }

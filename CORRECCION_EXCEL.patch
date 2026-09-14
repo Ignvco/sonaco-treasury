@@ -1,0 +1,1631 @@
+diff --git a/ACTUALIZACION.md b/ACTUALIZACION.md
+--- a/ACTUALIZACION.md
++++ b/ACTUALIZACION.md
+@@ -1,4 +1,6 @@
+ # Activar la actualización
++
++Para el libro **CAJA SONACOL** y el problema de «Success» sin datos, sigue **CORRECCION_EXCEL.md** y **PASOS.md** del nuevo paquete. Esta corrección acumulativa necesita actualizar el código y la base de datos.
+ 
+ Esta guía corresponde al proyecto del ZIP. No se aplicaron cambios al Supabase alojado ni se publicó una nueva versión de tu sitio.
+ 
+@@ -66,7 +68,7 @@
+ 
+ ## 5. Comprobar con un archivo real
+ 
+-1. Usa primero un entorno de prueba o un lote pequeño conocido. El ZIP recibido no contenía uno de los Excel concretos que fallaban.
++1. El libro real recibido posteriormente ya fue probado en una base aislada. Consulta CORRECCION_EXCEL.md para ver el resultado y las advertencias.
+ 2. Descarga la plantilla o selecciona tu libro. La lectura y la vista previa no escriben datos.
+ 3. Compara visualmente monto, moneda, tipo y fecha con el archivo original. Ajusta cada hoja y pulsa aplicar antes de continuar.
+ 4. Confirma. El lote debe mostrar sus filas efectivamente aceptadas y las rechazadas, con explicación.
+@@ -80,7 +82,7 @@
+ | `.xlsx`, `.xlsm`, `.xls` | Se comprueba formato y contenido; no se ejecutan macros |
+ | Archivos protegidos o dañados | Deben abrirse y guardarse como un libro válido sin contraseña antes de importar |
+ | Hoja con una sola fila de datos | Se acepta si tiene encabezados y datos válidos |
+-| Títulos antes de los encabezados | Detección en las primeras 50 filas; ajuste manual disponible |
++| Títulos antes de los encabezados | Detección en las primeras 50 filas con contenido; ajuste manual con el número de fila original |
+ | `Debe` y `Haber` | Convención del flujo contable: Debe = ingreso, Haber = egreso; se permite cero en el lado no usado |
+ | `Cargo` y `Abono` | Convención de cartola bancaria: Cargo = egreso, Abono = ingreso |
+ | Ambas columnas con monto | Se rechaza la fila para evitar una interpretación silenciosa |
+@@ -93,7 +95,7 @@
+ | Monedas | CLP, USD, UF y UTM; las desconocidas se marcan como error |
+ | Hoja desconocida | Se muestra para asignar destino o excluirla |
+ | Conciliación | No tiene importación automática en esta revisión; se gestiona desde su módulo |
+-| Tamaño | Hasta 20 MB y 20.000 filas procesadas; rangos de hoja excesivos se rechazan para evitar bloqueo |
++| Tamaño | Hasta 20 MB, 20.000 filas de datos y 2.000.000 de celdas con contenido. Las filas y columnas vacías con formato no cuentan como datos |
+ 
+ La confirmación conserva las filas de trazabilidad y los datos normalizados. No almacena el archivo Excel original en un bucket. Guarda el original en tu repositorio documental si necesitas conservarlo.
+ 
+@@ -108,7 +110,7 @@
+ | Error de lectura | Abre el archivo en Excel, elimina la contraseña si existe y guarda una copia válida; no basta cambiar la extensión |
+ | Montos o tipos incorrectos en la vista previa | Ajusta el mapeo y la convención numérica, o corrige el archivo antes de confirmar |
+ | “Tasa no disponible” | Configura una tasa válida en `fx_rates`; una unidad de moneda equivale a `rate_to_clp` pesos chilenos |
+-| Archivo muy grande o límite de análisis | Divide el libro y elimina filas/columnas vacías con formato excesivo |
++| Archivo muy grande o límite de análisis | Los límites se aplican a datos reales. El formato vacío se ignora automáticamente; si se alcanza un límite real, hace falta ampliar la capacidad de procesamiento |
+ | “Parcial” | Algunas filas se guardaron y otras requieren revisión; consulta el detalle antes de corregir y volver a importar |
+ | ERP o banco sin conector | Requiere una integración real; no se generan importaciones ficticias |
+ 
+diff --git a/CORRECCION_EXCEL.md b/CORRECCION_EXCEL.md
+new file mode 100644
+--- /dev/null
++++ b/CORRECCION_EXCEL.md
+@@ -0,0 +1,47 @@
++# Corrección del libro CAJA SONACOL
++
++Esta actualización incluye la corrección anterior de áreas vacías y agrega el lector del formato real CAJA SONACOL. Requiere actualizar el código **y** ejecutar la migración `20260914010000000_sonacol_workbook.sql`, después de `20260914000000000_import_integrity.sql`.
++
++El paquete de corrección contiene `ACTUALIZAR_BASE.sql`: combina ambas migraciones en orden, sin ejecutar los archivos históricos de limpieza. Puedes ejecutarlo completo en el SQL Editor del Supabase conectado a tu aplicación. No borra datos financieros.
++
++## Qué cambia
++
++- Lee las tablas BANCO, CLIENTES, COLOCACIONES y PROYEC; toma cuentas y saldos de INVERSIONES y CUADRATURA BANCOS. BASE permite comprobar los estados conciliados.
++- Evita recorrer los rangos vacíos y la columna de errores que ocupa más de un millón de filas en MACRO BANCOS. No ejecuta macros ni modifica el Excel.
++- No vuelve a importar los reportes, tablas dinámicas ni las copias intermedias como movimientos adicionales. La vista previa explica el uso de cada hoja.
++- Conserva movimientos contables iguales que aparecen varias veces en la fuente, sin fusionarlos por monto y fecha. Comprueba duplicados entre importaciones.
++- Guarda las cuentas con sus saldos. Si falta un número de cuenta, identifica la cuenta con el código contable y lo indica; no inventa números.
++- Protege saldos ya guardados cuando el archivo contiene una fecha anterior o un saldo diferente para la misma fecha.
++- Integraciones comprueba los registros contra las entidades guardadas. El historial antiguo sin trazabilidad aparece como «Sin verificar», aunque antes dijera «Success».
++- Los movimientos históricos se muestran en su moneda original. Los ya conciliados no se suman otra vez a la proyección de caja.
++
++## Prueba con el libro recibido
++
++Se leyó el `.xlsm` original, sin editarlo, y se ejecutó la función de importación en una base PostgreSQL de prueba aislada mediante PGlite. No se accedió a la base alojada del usuario.
++
++| Datos | Registros guardados |
++| --- | ---: |
++| Movimientos | 1.720 |
++| Facturas | 45 |
++| Inversiones | 6 |
++| Proyecciones manuales | 10 |
++| Cuentas y saldos | 8 |
++| Total de registros de importación | 1.789 |
++
++Las facturas crean o relacionan cinco clientes. Los ocho saldos en CLP suman 14.456.115 y coinciden con los movimientos netos de cada cuenta. Un movimiento de apertura en USD conserva su moneda y sus decimales.
++
++La vista previa produce 1.781 filas listas y 8 advertencias, sin errores. Las advertencias corresponden a seis inversiones sin tasa/interés informado, un movimiento en USD y una cuenta cuyo número no figura en el catálogo. La segunda carga del mismo contenido no creó registros adicionales.
++
++El detalle COLOCACIONES contiene 23.354.800.000 CLP, mientras el resumen INVERSIONES muestra 4.535.500.000 CLP en su columna de colocaciones. Son valores distintos del propio libro: esta versión utiliza el detalle, no mezcla ni suma ambos. Revisa esa diferencia antes de confirmar. Los resúmenes dinámicos y las fórmulas se leen con sus resultados guardados; no se recalculan.
++
++Estos conteos corresponden a este archivo y a una base de prueba. Si tu plataforma tiene datos previos, la detección de duplicados o conflictos puede cambiar lo que se guarda. Consulta el resultado de la importación.
++
++## Activación
++
++1. Aplica el parche acumulativo sobre la primera actualización del proyecto entregada en esta conversación. No necesitas aplicar el parche anterior de áreas vacías.
++2. Ejecuta `ACTUALIZAR_BASE.sql` en el proyecto Supabase conectado a tu aplicación.
++3. Instala dependencias, ejecuta `pnpm check` y `pnpm build`, y publica la versión actualizada en tu alojamiento.
++4. Abre Importaciones, selecciona tu libro original, revisa las advertencias y confirma. Leer la vista previa todavía no guarda datos.
++5. Revisa Bancos, Flujo de Caja → Movimientos, Cuentas por Cobrar, Inversiones, Proyecciones e Integraciones. La corrección no recupera automáticamente los archivos rechazados anteriormente: debes volver a seleccionarlos y confirmar.
++
++Si una fila falla, el detalle debe explicar por qué no se guardó. Si falta la nueva función de base de datos, la app muestra un error de actualización; no presenta ese fallo como cero registros o éxito.
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -101,7 +101,7 @@
+     "vite": "^7.1.4"
+   },
+   "engines": {
+-    "node": ">=22.12.0"
++    "node": ">=22.13.0"
+   },
+   "packageManager": "pnpm@11.19.0"
+ }
+diff --git a/src/components/treasury/KpiCard.tsx b/src/components/treasury/KpiCard.tsx
+--- a/src/components/treasury/KpiCard.tsx
++++ b/src/components/treasury/KpiCard.tsx
+@@ -8,6 +8,7 @@
+ interface KpiCardProps {
+   label: string;
+   value: number;
++  valueText?: string;
+   currency?: Currency;
+   variation?: number; // % change, may be negative
+   subtext?: string;
+@@ -22,6 +23,7 @@
+ export function KpiCard({
+   label,
+   value,
++  valueText,
+   currency,
+   variation,
+   subtext,
+@@ -45,7 +47,7 @@
+       </div>
+ 
+       <div className={cn("t-kpi-value", tone === "success" && "text-success", tone === "danger" && "text-danger", compact && "text-[22px]", value < 0 && "text-danger")}>
+-        {plain ? formatNumber(value) : money(value, currency)}
++        {valueText ?? (plain ? formatNumber(value) : money(value, currency))}
+       </div>
+ 
+       <div className="flex flex-wrap items-center gap-2">
+diff --git a/src/financial-engine/types.ts b/src/financial-engine/types.ts
+--- a/src/financial-engine/types.ts
++++ b/src/financial-engine/types.ts
+@@ -125,6 +125,7 @@
+   currency: Currency;
+   startDate: string; // ISO
+   endDate: string; // ISO
++  rateKnown?: boolean;
+   rate: number; // annual rate %
+   estimatedInterest: number;
+   status: InvestmentStatus;
+@@ -206,6 +207,7 @@
+   | "cash_flow"
+   | "investment"
+   | "projection"
++  | "bank_account"
+   | "reconciliation"
+   | "unknown";
+ 
+@@ -250,11 +252,12 @@
+ }
+ 
+ export interface SyncHistory {
++  verified?: boolean;
+   id: string;
+   source: string;
+   records: number;
+   durationSeconds: number;
+-  status: "Connected" | "Syncing" | "Success" | "Warning" | "Error";
++  status: "Connected" | "Syncing" | "Success" | "Warning" | "Error" | "Unverified" | "NoChanges";
+   errorMessage: string | null;
+   syncedAt: string;
+ }
+diff --git a/src/import-engine/pipeline.ts b/src/import-engine/pipeline.ts
+--- a/src/import-engine/pipeline.ts
++++ b/src/import-engine/pipeline.ts
+@@ -1,37 +1,68 @@
+ import * as XLSX from "xlsx";
++import { hasSonacolNames, readSonacol, SONACOL_SHEETS } from "./sonacol";
+ import type { ImportEntityType } from "@/financial-engine/types";
+ import { analyzeSheet, cellText, cellToDate, cellToNumber, detectColumns, isErrorCell } from "./detect";
+ import { classifyCategory, classifyType, normalizeBankName, normalizeCurrency, normalizeStatus } from "./normalize";
+ import { MAX_IMPORT_ROWS, type DetectedColumn, type ImportSummary, type ProcessedRecord, type SheetResult, type ImportOverrides } from "./types";
+ import { validateRecord } from "./validate";
+ 
+-export interface WorkSheetData { name: string; rows: unknown[][]; }
++export interface WorkSheetData {
++  name: string;
++  prepared?: ProcessedRecord[];
++  profile?: string;
++  note?: string;
++  rows: unknown[][];
++  /** Original 1-based Excel row numbers when blank rows have been omitted. */
++  rowNumbers?: number[];
++}
++
++const MAX_CONTENT_CELLS = 2000000;
++
++/** Formatting, comments and blank stubs are not business data. Keep formulas
++ * without cached values so validation can report them instead of losing a row. */
++function hasCellContent(value: unknown): boolean {
++  if (cellText(value).trim() !== "") return true;
++  const cell = value as { f?: string; v?: unknown } | null | undefined;
++  return !!cell && typeof cell === "object" && !!cell.f && cell.v == null;
++}
+ 
+ /** Preserve cell types, errors, leading zeros and original Excel row numbers. */
+ export async function parseWorkbook(buffer: ArrayBuffer): Promise<WorkSheetData[]> {
+   const bytes = new Uint8Array(buffer);
+   if (!(bytes[0] === 0x50 && bytes[1] === 0x4b) && !(bytes[0] === 0xd0 && bytes[1] === 0xcf))
+     throw new Error("El contenido no corresponde a un libro Excel válido. Abre el archivo en Excel y guárdalo como .xlsx.");
+-  const wb = XLSX.read(buffer, { type: "array", cellDates: false, bookVBA: false, cellFormula: true });
++  const metadata = XLSX.read(buffer, { type: "array", bookSheets: true });
++  const sonacol = hasSonacolNames(metadata.SheetNames);
++  const wb = XLSX.read(buffer, {
++    ...(sonacol ? { sheets: SONACOL_SHEETS } : {}),
++    type: "array", dense: false, cellDates: false, bookVBA: false,
++    cellFormula: true, sheetStubs: false, cellStyles: false,
++  });
++  if (sonacol) return readSonacol(wb);
+   const sheets: WorkSheetData[] = [];
+   let cells = 0;
+   for (const name of wb.SheetNames) {
+     const ws = wb.Sheets[name];
+-    if (!ws?.["!ref"]) continue;
+-    const range = XLSX.utils.decode_range(ws["!ref"]);
+-    cells += (range.e.r + 1) * (range.e.c + 1);
+-    if (range.e.r > 100000 || range.e.c > 255 || cells > 2000000)
+-      throw new Error("El libro excede el área de lectura. Divide los datos o elimina filas/columnas vacías con formato.");
+-    const rows: unknown[][] = [];
+-    for (let r = 0; r <= range.e.r; r++) {
+-      const row: unknown[] = [];
+-      for (let c = 0; c <= range.e.c; c++) {
+-        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+-        row.push(cell ? { t: cell.t, v: cell.v, w: cell.w, f: cell.f, date1904: !!wb.Workbook?.WBProps?.date1904 } : "");
+-      }
+-      rows.push(row);
++    if (!ws) continue;
++    const populatedRows = new Map<number, unknown[]>();
++    // !ref may span A1:XFD1048576 solely because of formatting. Walk stored
++    // cells, never that rectangle. Column positions remain the original indices.
++    for (const address in ws) {
++      if (!Object.prototype.hasOwnProperty.call(ws, address) || !/^[A-Z]{1,3}[1-9]\d{0,6}$/.test(address)) continue;
++      const cell = ws[address] as XLSX.CellObject;
++      if (!hasCellContent(cell)) continue;
++      const { r, c } = XLSX.utils.decode_cell(address);
++      if (r > 1048575 || c > 16383) throw new Error(`La hoja “${name}” contiene una dirección de celda inválida: ${address}.`);
++      if (++cells > MAX_CONTENT_CELLS)
++        throw new Error("El libro supera 2.000.000 de celdas con contenido. El formato vacío no cuenta para este límite.");
++      let row = populatedRows.get(r);
++      if (!row) { row = []; populatedRows.set(r, row); }
++      row[c] = { t: cell.t, v: cell.v, w: cell.w, f: cell.f, date1904: !!wb.Workbook?.WBProps?.date1904 };
+     }
+-    if (rows.some((r) => r.some((c) => cellText(c).trim()))) sheets.push({ name, rows });
++    if (populatedRows.size) {
++      const positions = [...populatedRows.keys()].sort((a, b) => a - b);
++      sheets.push({ name, rows: positions.map((r) => populatedRows.get(r)!), rowNumbers: positions.map((r) => r + 1) });
++    }
+   }
+   return sheets;
+ }
+@@ -47,9 +78,23 @@
+   for (const [sheetIndex, sheet] of sheets.entries()) {
+     onProgress?.(sheetIndex + 1, sheets.length, `Analizando hoja “${sheet.name}”…`);
+     const override = overrides[sheet.name] ?? {};
++    if (sheet.prepared) {
++      sheetResults.push({name:sheet.name,headerIndex:1,columns:[],dataRows:override.skip?0:sheet.prepared.length,entityType:sheet.prepared[0]?.entityType??"unknown",profile:sheet.profile,note:sheet.note});
++      if (!override.skip) for (const input of sheet.prepared) {
++        const record={...input};
++        if(record.status!=="ERROR") {
++          if(seen.has(record.dedupeKey)) {record.status="DUPLICATE";record.warnings="Fila idéntica a otra del archivo.";}
++          else seen.add(record.dedupeKey);
++        }
++        records.push(record);
++      }
++      if(records.length>MAX_IMPORT_ROWS) throw new Error("El libro supera 20.000 registros financieros. Las filas auxiliares no cuentan para este límite.");
++      continue;
++    }
+     const detected = analyzeSheet(sheet.name, sheet.rows);
+-    const headerIndex = override.headerIndex ?? detected?.headerIndex ?? 1;
+-    const header = sheet.rows[headerIndex - 1] ?? [];
++    const rowNumbers = sheet.rowNumbers ?? sheet.rows.map((_, i) => i + 1);
++    const headerIndex = override.headerIndex ?? (detected ? rowNumbers[detected.headerIndex - 1] : rowNumbers[0]) ?? 1;
++    const header = sheet.rows[rowNumbers.indexOf(headerIndex)] ?? [];
+     let columns = detectColumns(header);
+     if (override.mapping) {
+       for (const [key, index] of Object.entries(override.mapping)) {
+@@ -62,9 +107,10 @@
+       headers: header.map(cellText), sample: sheet.rows.slice(0, 8).map((row) => row.map(cellText)) };
+     sheetResults.push(analysis);
+     if (override.skip) continue;
+-    for (let i = headerIndex; i < sheet.rows.length; i++) {
++    for (let i = 0; i < sheet.rows.length; i++) {
++      if (rowNumbers[i] <= headerIndex) continue;
+       const row = sheet.rows[i];
+-      if (!row.some((c) => cellText(c).trim() !== "")) continue;
++      if (!Object.values(row).some(hasCellContent)) continue;
+       analysis.dataRows++;
+       const n = normalizeRow(entityType, columns, row, override.numberLocale);
+       const issues = validateRecord({ ...n, entityType, currencyKnown: n.currencyKnown === true });
+@@ -85,8 +131,11 @@
+       const baseStatus = issues.some((x) => x.kind === "error") ? "ERROR" : issues.length ? "WARNING" : "VALID";
+       const status = baseStatus !== "ERROR" && seen.has(dedupeKey) ? "DUPLICATE" : baseStatus;
+       if (status === "VALID" || status === "WARNING") seen.add(dedupeKey);
+-      const raw = Object.fromEntries(row.map((v, c) => [`${cellText(header[c]) || `Columna ${c + 1}`} [${c + 1}]`, cellText(v)]));
+-      records.push({ sheet: sheet.name, row: i + 1, status, entityType, normalized: n, raw,
++      const raw = Object.fromEntries(Object.entries(row).map(([index, v]) => {
++        const c = Number(index);
++        return [`${cellText(header[c]) || `Columna ${c + 1}`} [${c + 1}]`, cellText(v)];
++      }));
++      records.push({ sheet: sheet.name, row: rowNumbers[i], status, entityType, normalized: n, raw,
+         warnings: status === "DUPLICATE" ? "Fila idéntica a otra del archivo." : issues.map((x) => x.message).join(" · "), dedupeKey });
+       if (records.length > MAX_IMPORT_ROWS) throw new Error(`El libro supera ${MAX_IMPORT_ROWS.toLocaleString("es-CL")} filas. Divídelo en archivos más pequeños.`);
+     }
+diff --git a/src/import-engine/types.ts b/src/import-engine/types.ts
+--- a/src/import-engine/types.ts
++++ b/src/import-engine/types.ts
+@@ -12,6 +12,8 @@
+ }
+ 
+ export interface SheetResult {
++  profile?: string;
++  note?: string;
+   name: string;
+   headerIndex: number;
+   columns: DetectedColumn[];
+diff --git a/src/import-engine/validate.ts b/src/import-engine/validate.ts
+--- a/src/import-engine/validate.ts
++++ b/src/import-engine/validate.ts
+@@ -4,6 +4,7 @@
+ 
+ interface Validatable {
+   entityType: ImportEntityType;
++  bank?: unknown; balance?: unknown; reconciledBalance?: unknown;
+   document?: unknown; amount?: unknown; debe?: unknown; haber?: unknown;
+   issueDate?: unknown; dueDate?: unknown; date?: unknown;
+   startDate?: unknown; endDate?: unknown; customer?: unknown; rut?: unknown;
+@@ -19,6 +20,12 @@
+   };
+   if (r.entityType === "unknown") error("No se reconoció el tipo de datos. Configura las columnas y el destino de esta hoja.");
+   if (r.entityType === "reconciliation") error("Los saldos de conciliación requieren revisión manual; esta hoja no se importará como movimientos.");
++  if (r.entityType === "bank_account") {
++    if (!r.bank) error("Falta el banco de la cuenta.");
++    requireDate(r.date,"saldo");
++    for (const value of [r.balance,r.reconciledBalance]) if (typeof value!=="number" || !Number.isFinite(value)) error("Saldo contable o conciliado inválido.");
++    return issues;
++  }
+   if (r.entityType === "customer") {
+     if (!String(r.customer ?? "").trim()) error("Falta el nombre del cliente.");
+     return issues;
+diff --git a/src/import-engine/sonacol.ts b/src/import-engine/sonacol.ts
+new file mode 100644
+--- /dev/null
++++ b/src/import-engine/sonacol.ts
+@@ -0,0 +1,133 @@
++import * as XLSX from "xlsx";
++import { cellText, cellToDate, cellToNumber, isErrorCell } from "./detect";
++import { classifyCategory, normalizeBankName, normalizeCurrency, normalizeStatus } from "./normalize";
++import { validateRecord } from "./validate";
++import type { ImportEntityType } from "@/financial-engine/types";
++import type { WorkSheetData } from "./pipeline";
++
++export const SONACOL_SHEETS = ["BASE", "BANCO", "CLIENTES", "COLOCACIONES", "PROYEC", "INVERSIONES", "CUADRATURA BANCOS"];
++export const hasSonacolNames = (names: string[]) => SONACOL_SHEETS.every((s) => names.includes(s));
++const key = (v: unknown) => cellText(v).trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]/g, "");
++const text = (v: unknown) => cellText(v).trim();
++const num = (v: unknown) => cellToNumber(v);
++const date = (v: unknown) => cellToDate(v).iso;
++const active = (v: unknown) => isErrorCell(v) || (num(v) ?? 0) !== 0 || (!!text(v) && num(v) === null);
++const rows = (ws: XLSX.WorkSheet) => [...new Set(Object.keys(ws).filter((a) => /^[A-Z]+\d+$/.test(a)).map((a) => XLSX.utils.decode_cell(a).r + 1))].sort((a,b) => a-b);
++function header(ws: XLSX.WorkSheet, expected: Record<string,string>) {
++  return rows(ws).slice(0,60).find((r) => Object.entries(expected).every(([c,label]) => key(ws[c+r]) === key(label)));
++}
++
++/** This profile reads the source tables once. Pivot reports and macro staging
++ * copies must not create a second set of financial transactions. No macros run. */
++export function readSonacol(wb: XLSX.WorkBook): WorkSheetData[] {
++  const sheets = wb.Sheets;
++  const headers = {
++    BANCO: header(sheets.BANCO,{F:"FechaDocumento",J:"CtaCodigo",Z:"TesDocMontoImpuDebe",AA:"TesDocMontoImpuHaber"}),
++    CLIENTES: header(sheets.CLIENTES,{F:"RutCliente",N:"NúmeroDocumento",T:"MontoImputacionDebe"}),
++    COLOCACIONES: header(sheets.COLOCACIONES,{F:"RutCliente",T:"MontoImputacionDebe",Q:"FechaVencimiento"}),
++    PROYEC: header(sheets.PROYEC,{B:"FECHA",F:"DEBE",G:"HABER"}),
++    BASE: header(sheets.BASE,{A:"TABLA ORIGEN",P:"DEBE",Q:"HABER"}),
++  };
++  if (Object.values(headers).some((r) => !r)) throw new Error("Se reconoce un libro CAJA SONACOL, pero cambió la estructura de una tabla. No se importó nada: revisa la versión del formato con soporte.");
++  // Native numeric dates need the workbook's date system; never interpret the display string.
++  for (const ws of Object.values(sheets)) for (const [a,c] of Object.entries(ws)) {
++    if (/^[A-Z]+\d+$/.test(a)) (c as XLSX.CellObject & {date1904:boolean}).date1904 = !!wb.Workbook?.WBProps?.date1904;
++  }
++  const output = new Map<string,WorkSheetData>();
++  for (const name of wb.SheetNames) output.set(name,{name,rows:[],prepared:[],profile:"CAJA SONACOL",note:"Hoja fuera de las tablas de carga del formato CAJA SONACOL: no genera registros adicionales."});
++  const add = (name:string,row:number,entityType:ImportEntityType,n:Record<string,unknown>,columns:string[],warning="") => {
++    const ws = sheets[name];
++    const errors = validateRecord({...n,entityType,currencyKnown:n.currencyKnown === true});
++    for (const c of columns) {
++      const cell=ws[c+row];
++      if (isErrorCell(cell)) errors.push({kind:"error",message:`La celda ${c}${row} contiene un error de Excel.`});
++      else if (cell?.f && cell.v == null) errors.push({kind:"error",message:`La fórmula ${c}${row} no tiene resultado guardado.`});
++    }
++    if (warning) errors.push({kind:"warning",message:warning});
++    const d=n.debe as number|null, h=n.haber as number|null;
++    if ((d??0)<0 || (h??0)<0 || ((d??0)>0 && (h??0)>0)) errors.push({kind:"error",message:"Revisar Debe/Haber: ambos lados tienen monto o contienen valores negativos."});
++    const raw=Object.fromEntries(columns.map((c)=>[c+row,text(ws[c+row])]));
++    const status=errors.some((e)=>e.kind==="error")?"ERROR":errors.length?"WARNING":"VALID";
++    const dedupeKey=JSON.stringify([entityType,n.sourceId,n.document,n.rut,n.account,n.bank,n.currency,n.amount,n.type,n.date,n.issueDate,n.dueDate,n.startDate,n.endDate,n.description,n.balance,n.reconciledBalance]);
++    output.get(name)!.prepared!.push({sheet:name,row,entityType,normalized:n,raw,status,warnings:errors.map((e)=>e.message).join(" · "),dedupeKey});
++  };
++  const inv=sheets.INVERSIONES, cuad=sheets["CUADRATURA BANCOS"];
++  const bankRows=rows(inv).filter((r)=>/^\d{6,}\s+/.test(text(inv["B"+r])));
++  const catalog=new Map<string,{bank:string|null;account:string|null}>();
++  const snapshotHeader=rows(cuad).find((r)=>key(cuad["A"+(r+2)])==="SALDOCONCILIADO" && key(cuad["A"+(r+3)])==="SALDOCONTABLE");
++  const snapshotDateRow=rows(cuad).find((r)=>key(cuad["B"+r]).startsWith("SALDOSBANCOSSONACOLAL"));
++  const asOf=snapshotDateRow ? date(cuad["F"+snapshotDateRow]) : null;
++  const lookupRows=rows(inv).filter((r)=>text(inv["H"+r]) && text(inv["J"+r]));
++  for (const r of bankRows) {
++    const code=text(inv["B"+r]).match(/^\d+/)![0], bank=normalizeBankName(inv["B"+r]?.v);
++    const lookup=lookupRows.find((lr)=>text(inv["H"+lr]).toUpperCase()===text(inv["A"+r]).toUpperCase());
++    const col=snapshotHeader ? Object.keys(cuad).find((a)=>/^[A-Z]+\d+$/.test(a) && XLSX.utils.decode_cell(a).r+1===snapshotHeader && normalizeBankName(text(cuad[a]).replace(/\s+[\d-]+\s*$/,""))===bank)?.replace(/\d+$/,"") : undefined;
++    const headerAccount=col ? text(cuad[col+snapshotHeader!]).match(/\s+([\d-]+)\s*$/)?.[1] : null;
++    const account=lookup ? text(inv["J"+lookup]) : headerAccount || null;
++    catalog.set(code,{bank,account});
++    const n={bank,account,ledgerCode:code,date:asOf,currency:"CLP",currencyKnown:true,
++      balance:col ? num(cuad[col+(snapshotHeader!+3)]) : null,
++      reconciledBalance:col ? num(cuad[col+(snapshotHeader!+2)]) : null,
++      description:`Saldo ${bank} · ${account || "cuenta contable "+code}`};
++    // Each vertical output record keeps its source row in the bank catalog and
++    // explicit references to the horizontal balance snapshot in the audit data.
++    add("INVERSIONES",r,"bank_account",n,["A","B","C"],account?"":"El libro no indica el número de cuenta; se conserva el código contable sin inventar un número.");
++    const accountRecords=output.get("INVERSIONES")!.prepared!;
++    const record=accountRecords[accountRecords.length-1];
++    if (lookup) record.raw[`INVERSIONES!J${lookup}`]=text(inv["J"+lookup]);
++    if (snapshotDateRow) record.raw[`CUADRATURA BANCOS!F${snapshotDateRow}`]=text(cuad["F"+snapshotDateRow]);
++    if(col) for(const offset of [2,3]) record.raw[`CUADRATURA BANCOS!${col}${snapshotHeader!+offset}`]=text(cuad[col+(snapshotHeader!+offset)]);
++    if (!col || !asOf) { record.status="ERROR";record.warnings="No se encontró la fecha o la columna de saldos para este banco."; }
++  }
++  const baseBySource=new Map<number,number>();
++  for(const r of rows(sheets.BASE)) if(text(sheets.BASE["A"+r])==="BANCO") {
++    const match=sheets.BASE["D"+r]?.f?.match(/(?:'BANCO'|BANCO)!\$?F\$?(\d+)/i);
++    if(match) baseBySource.set(Number(match[1]),r);
++  }
++  const ws=sheets.BANCO;
++  const occurrences=new Map<string,number>();
++  for(const r of rows(ws).filter((r)=>r>headers.BANCO!)) {
++    if(!active(ws["Z"+r]) && !active(ws["AA"+r])) continue;
++    const d=num(ws["Z"+r]),h=num(ws["AA"+r]),type=(h??0)>0?"expense":"income";
++    const code=text(ws["J"+r]),mapped=catalog.get(code),br=baseBySource.get(r);
++    const description=text(ws["U"+r]);
++    const currency=normalizeCurrency(text(ws["L"+r]));
++    const reconciliation=br ? normalizeStatus(text(sheets.BASE["S"+br])) : null;
++    const n={bank:mapped?.bank??normalizeBankName(ws["K"+r]?.v),account:mapped?.account??null,ledgerCode:code,
++      currency:currency.currency,currencyKnown:currency.known,date:date(ws["F"+r]),amount:d||h||null,debe:d,haber:h,type,
++      status:reconciliation==="conciliado"?"conciliado":"confirmado",description,category:classifyCategory(type,br?text(sheets.BASE["U"+br]):description),
++      sourceId:["SONACOL","BANCO",...['B','C','D','E','G','H','I','J'].map((c)=>text(ws[c+r]))].join(":"),document:text(ws["W"+r])||null};
++    // Exported voucher/line identifiers are reused in this template. Preserve
++    // identical business rows as separate postings (their net reconciles to the
++    // account snapshot), while retaining stable multiplicity across reimports.
++    const identity=JSON.stringify([n.sourceId,n.date,n.type,n.amount,n.currency,n.description,n.document]);
++    const occurrence=(occurrences.get(identity)??0)+1; occurrences.set(identity,occurrence);
++    n.sourceId += `:occurrence:${occurrence}`;
++    add("BANCO",r,"cash_flow",n,["A","B","C","D","E","F","G","H","I","J","K","L","U","W","Z","AA"],currency.currency!=="CLP"?"Monto conservado en moneda original. La consolidación en CLP requiere configurar su tipo de cambio.":"");
++  }
++  for(const name of ["CLIENTES","COLOCACIONES"] as const) {
++    const ws=sheets[name];
++    for(const r of rows(ws).filter((r)=>r>headers[name]!)) {
++      if(!["T","U","V"].some((c)=>active(ws[c+r]))) continue;
++      const d=num(ws["T"+r]),h=num(ws["U"+r]);
++      const currency=normalizeCurrency(text(ws["O"+r]));
++      // The placement export uses zero for local-currency FF.MM.; make this
++      // source-specific interpretation reviewable, never a global currency alias.
++      const localFund=name==="COLOCACIONES" && text(ws["O"+r])==="0" && key(ws["K"+r])==="FFMM";
++      const n:Record<string,unknown>={currency:localFund?"CLP":currency.currency,currencyKnown:localFund||currency.known,
++        amount:ws["V"+r] ? num(ws["V"+r]) : (d??0)-(h??0),description:text(ws["K"+r])+" · "+text(ws["S"+r])};
++      if(name==="CLIENTES") Object.assign(n,{customer:text(ws["G"+r]),rut:text(ws["F"+r]),document:text(ws["N"+r]),issueDate:date(ws["P"+r]),dueDate:date(ws["Q"+r])});
++      else Object.assign(n,{bank:normalizeBankName(ws["G"+r]?.v),startDate:date(ws["P"+r]),endDate:date(ws["Q"+r]),investmentType:key(ws["K"+r])==="FFMM"?"fondo_mutuo":"colocacion",rate:null,interest:null,rateKnown:false});
++      add(name,r,name==="CLIENTES"?"invoice":"investment",n,["F","G","K","N","O","P","Q","S","T","U","V"],name==="COLOCACIONES"?"Saldo de inversión tomado de COLOCACIONES. Tasa e interés no informados."+(localFund?" Moneda 0 interpretada como CLP para FF.MM.":""):"");
++    }
++  }
++  for(const r of rows(sheets.PROYEC).filter((r)=>r>headers.PROYEC!)) {
++    const ws=sheets.PROYEC;
++    if(!active(ws["F"+r])&&!active(ws["G"+r])) continue;
++    const d=num(ws["F"+r]),h=num(ws["G"+r]),type=(h??0)>0?"expense":"income",description=text(ws["D"+r])||text(ws["J"+r]);
++    add("PROYEC",r,"projection",{date:date(ws["E"+r])||date(ws["B"+r]),debe:d,haber:h,amount:d||h||null,type,description,category:classifyCategory(type,text(ws["J"+r])),bank:normalizeBankName(ws["I"+r]?.v),currency:"CLP",currencyKnown:true,status:"proyectado"},["B","D","E","F","G","I","J","K"]);
++  }
++  const notes:Record<string,string>={BANCO:"Movimientos originales del libro. El estado conciliado se comprueba en BASE; se conservan comprobante y línea para no fusionar movimientos distintos.",CLIENTES:"Documentos por cobrar con saldo. Las columnas auxiliares y las filas de plantilla no son facturas.",COLOCACIONES:"Detalle de inversiones con saldo. Los totales y formularios de INVERSIONES pueden diferir de esta tabla; revísalos antes de confirmar.",PROYEC:"Proyecciones manuales con monto; se excluyen las filas de plantilla vacías o con cero.",INVERSIONES:"Cuentas y saldos de CUADRATURA BANCOS, relacionados mediante el catálogo de INVERSIONES. No se duplican como ingresos.",BASE:"Consolidado utilizado para comprobar conciliación. Sus copias de movimientos, facturas e inversiones no se vuelven a importar."};
++  for(const [name,note] of Object.entries(notes)) output.get(name)!.note=note;
++  return [...output.values()].sort((a,b)=>(b.prepared?.length??0)-(a.prepared?.length??0));
++}
+diff --git a/src/pages/CashFlow.tsx b/src/pages/CashFlow.tsx
+--- a/src/pages/CashFlow.tsx
++++ b/src/pages/CashFlow.tsx
+@@ -25,7 +25,7 @@
+   type CashFlowCategory,
+   type CashFlowType,
+ } from "@/financial-engine/types";
+-import { formatDateMedium, formatDateShort, todayISO } from "@/financial-engine/format";
++import { formatDateMedium, formatDateShort, formatMoney, todayISO } from "@/financial-engine/format";
+ import { cn } from "@/lib/utils";
+ 
+ type ChartMode = "daily" | "weekly" | "monthly";
+@@ -241,17 +241,17 @@
+   refreshKey: number;
+   banks: { value: string; label: string }[];
+ }) {
+-  const { money } = useCurrency();
+-  const { data: movements, loading } = useAsyncData(
++  const { data: movements, loading, error } = useAsyncData(
+     () =>
+       dataService.getMovementsFiltered({
++        status: filters.status || undefined,
+         from: filters.from || undefined,
+         to: filters.to || undefined,
+         bankId: filters.bankId || undefined,
+         category: (filters.category as CashFlowCategory) || undefined,
+         type: (filters.type as CashFlowType) || undefined,
+       }),
+-    [filters.from, filters.to, filters.bankId, filters.category, filters.type, refreshKey],
++    [filters.from, filters.to, filters.bankId, filters.category, filters.type, filters.status, refreshKey],
+   );
+ 
+   const categories = Object.entries(CASHFLOW_CATEGORY_LABEL).map(([value, label]) => ({
+@@ -262,7 +262,7 @@
+   const statuses = Object.entries(CASHFLOW_STATUS_LABEL).map(([value, label]) => ({ value, label }));
+ 
+   return (
+-    <SectionCard title="Movimientos" subtitle="Registros del flujo de caja">
++    <SectionCard title="Movimientos" subtitle="Importes en su moneda original. Los movimientos ya conciliados no se vuelven a sumar al saldo.">
+       <FilterBar>
+         <FilterSelect
+           value={filters.bankId}
+@@ -293,7 +293,7 @@
+         />
+       </FilterBar>
+ 
+-      {loading ? (
++      {error ? <ErrorState message={error}/> : loading ? (
+         <LoadingState label="Filtrando movimientos…" />
+       ) : !movements || movements.length === 0 ? (
+         <EmptyState title="Sin movimientos" description="No hay registros que coincidan con los filtros." />
+@@ -329,16 +329,17 @@
+             },
+             {
+               key: "amount",
+-              header: "Monto",
++              header: "Monto original",
+               align: "right",
+               sortValue: (m) => m.amount,
+               render: (m) => (
+                 <span className={cn("t-num font-semibold", m.type === "income" ? "text-success" : "text-danger")}>
+                   {m.type === "income" ? "+" : "-"}
+-                  {money(m.amount)}
++                  {formatMoney(m.amount, m.currency)}
+                 </span>
+               ),
+             },
++            { key: "currency", header: "Moneda", render: (m) => m.currency },
+             { key: "status", header: "Estado", align: "center", render: (m) => <StatusBadge label={CASHFLOW_STATUS_LABEL[m.status]} /> },
+           ]}
+         />
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+--- a/src/pages/Dashboard.tsx
++++ b/src/pages/Dashboard.tsx
+@@ -37,7 +37,7 @@
+   CASHFLOW_TYPE_LABEL,
+   type CashFlow,
+ } from "@/financial-engine/types";
+-import { formatDateMedium, formatDateShort, toISODate } from "@/financial-engine/format";
++import { formatDateMedium, formatDateShort, formatMoney, toISODate } from "@/financial-engine/format";
+ import { cn } from "@/lib/utils";
+ 
+ type ChartMode = "daily" | "weekly" | "monthly";
+@@ -90,7 +90,7 @@
+     Fecha: formatDateMedium(m.date),
+     Cuenta: bankName.get(m.bankId) ?? "—",
+     Tipo: CASHFLOW_TYPE_LABEL[m.type],
+-    Monto: m.type === "income" ? `+${money(m.amount)}` : `-${money(m.amount)}`,
++    Monto: m.type === "income" ? `+${formatMoney(m.amount, m.currency)}` : `-${formatMoney(m.amount, m.currency)}`,
+     Estado: CASHFLOW_STATUS_LABEL[m.status],
+   }));
+ 
+@@ -367,13 +367,13 @@
+               },
+               {
+                 key: "amount",
+-                header: "Monto",
++                header: "Monto original",
+                 align: "right",
+                 sortValue: (m) => m.amount,
+                 render: (m) => (
+                   <span className={cn("t-num text-[13px] font-semibold", m.type === "income" ? "text-success" : "text-danger")}>
+                     {m.type === "income" ? "+" : "-"}
+-                    {money(m.amount)}
++                    {formatMoney(m.amount, m.currency)}
+                   </span>
+                 ),
+               },
+diff --git a/src/pages/Integrations.tsx b/src/pages/Integrations.tsx
+--- a/src/pages/Integrations.tsx
++++ b/src/pages/Integrations.tsx
+@@ -1,335 +1,43 @@
+-import { useState } from "react";
+ import { Link } from "react-router-dom";
+-import {
+-  ArrowDownToLine,
+-  Database,
+-  FileSpreadsheet,
+-  Landmark,
+-  Loader2,
+-  Plug,
+-  RefreshCw,
+-  ServerCog,
+-} from "lucide-react";
+-import { toast } from "sonner";
++import { FileSpreadsheet, Landmark, ServerCog } from "lucide-react";
+ import { useAsyncData } from "@/hooks/use-async";
+ import { importService } from "@/services/importService";
+-import { createERPConnector } from "@/services/erp/erp-connector";
+ import { PageHeader } from "@/components/treasury/PageHeader";
+ import { SectionCard } from "@/components/treasury/SectionCard";
+ import { DataTable } from "@/components/treasury/DataTable";
+ import { StatusBadge, type StatusTone } from "@/components/treasury/StatusBadge";
+-import { LoadingState, ErrorState, EmptyState } from "@/components/treasury/feedback";
+-import type { SyncHistory, SyncSource } from "@/financial-engine/types";
++import { LoadingState, ErrorState } from "@/components/treasury/feedback";
+ import { formatDateMedium } from "@/financial-engine/format";
+-import { cn } from "@/lib/utils";
+-import { useCanWrite } from "@/contexts/auth-context";
+ 
+-const SYNC_TONE: Record<string, StatusTone> = {
+-  Success: "success",
+-  Connected: "success",
+-  Warning: "warning",
+-  Syncing: "info",
+-  Error: "danger",
+-};
+-
+-const SOURCE_LABEL: Record<string, string> = {
+-  erp: "ERP",
+-  excel: "Excel",
+-  banks: "Bancos",
+-};
+-
++const LABEL:Record<string,string>={Success:"Guardado",Warning:"Revisar",Error:"No guardado",Unverified:"Sin verificar",NoChanges:"Sin cambios"};
++const TONE:Record<string,StatusTone>={Success:"success",Warning:"warning",Error:"danger",Unverified:"muted",NoChanges:"info"};
+ export default function Integrations() {
+-  const canWrite = useCanWrite();
+-  const [refresh, setRefresh] = useState(0);
+-  const [syncing, setSyncing] = useState<string | null>(null);
+-
+-  const { data: sources, loading, error } = useAsyncData(
+-    () => importService.getSyncSources(),
+-    [refresh],
+-  );
+-  const { data: history } = useAsyncData(() => importService.getSyncHistory(), [refresh]);
+-
+-  const erpConnector = createERPConnector();
+-
+-  if (loading) return <LoadingState />;
+-  if (error) return <ErrorState message={error} />;
+-  if (!sources) return <EmptyState />;
+-
+-  const src = (s: string): SyncSource | undefined =>
+-    (sources as SyncSource[]).find((x) => x.source === s);
+-
+-  const runSync = async (source: "erp" | "excel" | "banks") => {
+-    if (!canWrite) return;
+-    setSyncing(source);
+-    try {
+-      await importService.runSync(source);
+-      toast.success("Sincronización completada", { description: `Origen ${SOURCE_LABEL[source]}` });
+-    } catch (err) {
+-      toast.error("Sincronización no disponible", {
+-        description: err instanceof Error ? err.message : "Fuente sin configurar",
+-      });
+-    } finally {
+-      setSyncing(null);
+-      setRefresh((r) => r + 1);
+-    }
+-  };
+-
+-  const syncRows = (history ?? []).map((h) => ({
+-    ...h,
+-    durationText: `${h.durationSeconds}s`,
+-  }));
+-
+-  const exportRows = (history ?? []).map((h) => ({
+-    Fecha: formatDateMedium(h.syncedAt),
+-    Origen: SOURCE_LABEL[h.source] ?? h.source,
+-    Registros: h.records,
+-    Duración: `${h.durationSeconds}s`,
+-    Estado: h.status,
+-    Errores: h.errorMessage ?? "",
+-  }));
+-
+-  return (
+-    <div className="t-fade-in flex flex-col gap-5">
+-      <PageHeader
+-        title="Centro de Integraciones"
+-        subtitle="Fuentes de datos: ERP, Excel histórico y bancos"
+-        actions={
+-          canWrite && (
+-            <Link
+-              to="/importations"
+-              className="inline-flex h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[13px] font-semibold text-white transition-colors hover:bg-brand-dark"
+-            >
+-              <FileSpreadsheet className="h-4 w-4" />
+-              Nueva importación
+-            </Link>
+-          )
+-        }
+-      />
+-
+-      <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+-        {/* ERP */}
+-        <IntegrationCard
+-          icon={ServerCog}
+-          name="ERP Corporativo"
+-          state={src("erp")}
+-          tone="danger"
+-          description="Fuente de datos contables reales"
+-          statusLabel={src("erp")?.enabled ? "Conectado" : "No configurado"}
+-          footer={
+-            <div className="flex flex-col gap-1.5">
+-              {erpConnector.capabilities.slice(0, 4).map((c) => (
+-                <div key={c.operation} className="flex items-center justify-between text-[11.5px]">
+-                  <span className="font-mono text-muted-foreground">{c.operation}</span>
+-                  <span className="rounded-full bg-muted px-2 py-0.5 font-semibold text-muted-foreground">
+-                    pendiente
+-                  </span>
+-                </div>
+-              ))}
+-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+-                Requiere fabricante, versión, conexión y credenciales. Se implementará en un
+-                connector de backend, nunca desde el navegador.
+-              </p>
+-            </div>
+-          }
+-          action={
+-            <button
+-              disabled={!canWrite || syncing === "erp"}
+-              onClick={() => runSync("erp")}
+-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-[#EAEAEA] bg-card px-3 text-[12px] font-semibold text-muted-foreground transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+-            >
+-              {syncing === "erp" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug className="h-3.5 w-3.5" />}
+-              Sincronizar ahora
+-            </button>
+-          }
+-        />
+-
+-        {/* Excel */}
+-        <IntegrationCard
+-          icon={FileSpreadsheet}
+-          name="Excel histórico"
+-          state={src("excel")}
+-          tone="success"
+-          description="Importador ETL de archivos .xlsx / .xlsm"
+-          statusLabel="Conectado"
+-          stats={[
+-            { label: "Registros procesados", value: String(src("excel")?.recordsSynced ?? 0) },
+-            { label: "Errores", value: String(src("excel")?.errors ?? 0) },
+-          ]}
+-          action={
+-            <div className="flex gap-2">
+-              <Link
+-                to="/importations"
+-                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand px-3 text-[12px] font-semibold text-white transition-colors hover:bg-brand-dark"
+-              >
+-                <FileSpreadsheet className="h-3.5 w-3.5" />
+-                Importar
+-              </Link>
+-              <button
+-                disabled={!canWrite || syncing === "excel"}
+-                onClick={() => runSync("excel")}
+-                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#EAEAEA] bg-card px-3 text-[12px] font-semibold text-foreground transition-colors hover:border-brand/40 hover:text-brand disabled:opacity-50"
+-              >
+-                {syncing === "excel" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+-                Sincronizar
+-              </button>
+-            </div>
+-          }
+-        />
+-
+-        {/* Banks */}
+-        <IntegrationCard
+-          icon={Landmark}
+-          name="Integración bancaria"
+-          state={src("banks")}
+-          tone="warning"
+-          description="Cuadraturas y conciliación automática"
+-          statusLabel="Preparada"
+-          footer={
+-            <p className="text-[11px] leading-relaxed text-muted-foreground">
+-              Arquitectura lista para conectar servicios bancarios (carteras, abonos, saldos). La
+-              implementación requiere el proveedor y sus credenciales.
+-            </p>
+-          }
+-          action={
+-            <button
+-              disabled={!canWrite || syncing === "banks"}
+-              onClick={() => runSync("banks")}
+-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-[#EAEAEA] bg-card px-3 text-[12px] font-semibold text-muted-foreground transition-colors hover:border-warning/50 hover:text-warning disabled:opacity-50"
+-            >
+-              {syncing === "banks" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug className="h-3.5 w-3.5" />}
+-              Sincronizar ahora
+-            </button>
+-          }
+-        />
+-      </div>
+-
+-      {/* Architecture */}
+-      <div className="t-card flex flex-col gap-3 p-5">
+-        <div className="flex items-center gap-2.5">
+-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-soft text-brand-dark">
+-            <Database className="h-4 w-4" strokeWidth={1.8} />
+-          </span>
+-          <div>
+-            <p className="text-[13px] font-semibold text-foreground">Arquitectura de datos</p>
+-            <p className="text-[11px] text-muted-foreground">Fuentes → Normalización → Base de datos → Motor financiero → App</p>
+-          </div>
+-        </div>
+-        <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium">
+-          {["Excel histórico", "ERP (futuro)"].map((srcName, i) => (
+-            <span key={srcName} className="flex items-center gap-2">
+-              {i > 0 && <ArrowDownToLine className="h-3.5 w-3.5 text-muted-foreground" />}
+-              <span className="rounded-xl border border-[#EAEAEA] bg-card px-3 py-1.5">{srcName}</span>
+-            </span>
+-          ))}
+-          <ArrowDownToLine className="h-3.5 w-3.5 text-muted-foreground" />
+-          <span className="rounded-xl bg-brand-soft px-3 py-1.5 text-brand-dark">Data Platform</span>
+-          <ArrowDownToLine className="h-3.5 w-3.5 text-muted-foreground" />
+-          <span className="rounded-xl bg-brand-soft px-3 py-1.5 text-brand-dark">Treasury Engine</span>
+-          <ArrowDownToLine className="h-3.5 w-3.5 text-muted-foreground" />
+-          <span className="rounded-xl bg-brand px-3 py-1.5 text-white">SONACOL Treasury</span>
+-        </div>
+-      </div>
+-
+-      {/* Sync history */}
+-      <SectionCard
+-        title="Historial de Sincronizaciones"
+-        subtitle="Origen, registros, duración y estado de cada sincronización"
+-        bodyClassName="pt-2"
+-      >
+-        <DataTable
+-          data={syncRows}
+-          rowKey={(h) => h.id}
+-          pageSize={8}
+-          columns={[
+-            { key: "date", header: "Fecha", sortValue: (h) => h.syncedAt, render: (h) => <span className="text-muted-foreground">{formatDateMedium(h.syncedAt)}</span> },
+-            { key: "source", header: "Origen", sortValue: (h) => h.source, render: (h) => <span className="font-medium">{SOURCE_LABEL[h.source] ?? h.source}</span> },
+-            { key: "records", header: "Registros", align: "right", sortValue: (h) => h.records, render: (h) => <span className="t-num">{h.records.toLocaleString("es-CL")}</span> },
+-            { key: "duration", header: "Duración", align: "right", render: (h) => <span className="t-num text-muted-foreground">{h.durationText}</span> },
+-            { key: "status", header: "Estado", align: "center", render: (h) => <StatusBadge label={h.status} tone={SYNC_TONE[h.status] ?? "info"} /> },
+-            { key: "errors", header: "Errores", render: (h) => <span className={cn("text-[12px]", h.errorMessage ? "text-danger" : "text-success")}>{h.errorMessage || "—"}</span> },
+-          ]}
+-        />
+-      </SectionCard>
+-
+-      {/* Source of truth */}
+-      <div className="t-card flex flex-col gap-2 p-5">
+-        <p className="text-[13px] font-semibold text-foreground">Fuente de verdad</p>
+-        <p className="text-[12px] leading-relaxed text-muted-foreground">
+-          <span className="font-semibold text-foreground">ERP</span> = datos contables reales (cuando
+-          exista integración) · <span className="font-semibold text-foreground">Tesorería</span> =
+-          proyecciones y gestión · <span className="font-semibold text-foreground">Excel</span> =
+-          fuente histórica / legacy. El Excel no será una dependencia operacional futura.
+-        </p>
+-      </div>
++  const {data,loading,error}=useAsyncData(()=>importService.getIntegrationStatus(),[]);
++  if(loading) return <LoadingState />;
++  if(error) return <ErrorState message={error} />;
++  if(!data) return null;
++  return <div className="t-fade-in flex flex-col gap-5">
++    <PageHeader title="Centro de Integraciones" subtitle="Comprueba el origen y los datos guardados en tu plataforma" actions={<Link className="t-button-primary" to="/importations"><FileSpreadsheet size={16}/> Nueva importación</Link>}/>
++    <div className="grid gap-5 lg:grid-cols-3">
++      <section className="t-card space-y-4 border-brand/30 p-5">
++        <div className="flex items-center justify-between gap-3"><FileSpreadsheet className="text-brand"/><StatusBadge label={data.records?"Datos disponibles":"Listo para importar"} tone={data.records?"success":"info"}/></div>
++        <div><h2 className="font-semibold">Excel histórico</h2><p className="mt-1 text-xs text-muted-foreground">Archivos .xlsx, .xlsm y .xls · Formato CAJA SONACOL</p></div>
++        <div className="rounded-xl bg-brand-soft p-4"><p className="text-xs text-muted-foreground">Registros importados que existen en la plataforma</p><p className="mt-1 text-3xl font-semibold tabular-nums">{data.records.toLocaleString("es-CL")}</p></div>
++        <p className="text-xs text-muted-foreground">{data.lastSyncAt?`Última carga con datos: ${formatDateMedium(data.lastSyncAt)}`:"Todavía no hay una carga con datos verificables."}</p>
++        {data.errors>0 && <p className="text-sm text-danger">{data.errors} filas no guardadas en el último lote. Revisa Importaciones.</p>}
++        <Link className="t-button-primary w-full justify-center" to="/importations">Importar archivo</Link>
++      </section>
++      {[{name:"ERP Corporativo",Icon:ServerCog,text:"Conecta tu sistema contable cuando dispongas de una integración configurada."},{name:"Integración bancaria",Icon:Landmark,text:"La conexión directa con bancos requiere configurar un proveedor. Los saldos de Excel se cargan desde Importaciones."}].map(({name,Icon,text})=><section className="t-card space-y-4 p-5" key={name}><div className="flex items-center justify-between"><Icon className="text-muted-foreground"/><StatusBadge label="No configurado" tone="muted"/></div><h2 className="font-semibold">{name}</h2><p className="text-sm leading-relaxed text-muted-foreground">{text}</p></section>)}
+     </div>
+-  );
++    <div className="rounded-xl border bg-muted/40 p-4 text-sm leading-relaxed">Analizar un archivo muestra una vista previa. Los datos se guardan al pulsar <strong>Importar</strong> y recibir la confirmación. Un registro antiguo marcado «Sin verificar» no demuestra que haya información cargada.</div>
++    <SectionCard title="Historial de sincronizaciones" subtitle="Los registros verificados se comprueban contra las tablas de la plataforma">
++      <DataTable data={data.history} rowKey={(h)=>h.id} pageSize={8} columns={[
++        {key:"date",header:"Fecha",render:(h)=>formatDateMedium(h.syncedAt)},
++        {key:"source",header:"Origen",render:(h)=>h.source==="excel"?"Excel":h.source},
++        {key:"records",header:"Registros",align:"right",render:(h)=><span className="tabular-nums">{h.records.toLocaleString("es-CL")}{!h.verified && <span className="ml-1 text-xs text-muted-foreground">declarados</span>}</span>},
++        {key:"status",header:"Estado",render:(h)=><StatusBadge label={LABEL[h.status]??"Sin verificar"} tone={TONE[h.status]??"muted"}/>},
++        {key:"detail",header:"Detalle",className:"!whitespace-normal min-w-[230px]",render:(h)=><span className="text-xs text-muted-foreground">{h.errorMessage||"Datos guardados y disponibles."}</span>},
++      ]}/>
++    </SectionCard>
++  </div>;
+ }
+-
+-function IntegrationCard({
+-  icon: Icon,
+-  name,
+-  state,
+-  tone,
+-  description,
+-  statusLabel,
+-  stats,
+-  footer,
+-  action,
+-}: {
+-  icon: typeof Landmark;
+-  name: string;
+-  state?: SyncSource;
+-  tone: "success" | "warning" | "danger";
+-  description: string;
+-  statusLabel: string;
+-  stats?: { label: string; value: string }[];
+-  footer?: React.ReactNode;
+-  action: React.ReactNode;
+-}) {
+-  const lastSync = state?.lastSyncAt;
+-  const iconTone = {
+-    success: "bg-success-soft text-success",
+-    warning: "bg-warning-soft text-warning",
+-    danger: "bg-danger-soft text-danger",
+-  }[tone];
+-
+-  return (
+-    <div className="t-card t-card-hover flex flex-col gap-4 p-5">
+-      <div className="flex items-start justify-between gap-3">
+-        <div className="flex items-center gap-3">
+-          <span className={cn("flex h-10 w-10 items-center justify-center rounded-2xl", iconTone)}>
+-            <Icon className="h-5 w-5" strokeWidth={1.8} />
+-          </span>
+-          <div>
+-            <p className="text-[14px] font-semibold text-foreground">{name}</p>
+-            <p className="text-[11px] text-muted-foreground">{description}</p>
+-          </div>
+-        </div>
+-        <StatusBadge
+-          label={statusLabel}
+-          tone={state?.enabled ? "success" : tone === "danger" ? "muted" : tone}
+-        />
+-      </div>
+-
+-      {stats && (
+-        <div className="grid grid-cols-2 gap-2.5">
+-          {stats.map((s) => (
+-            <div key={s.label} className="rounded-xl border border-[#EAEAEA] px-3 py-2">
+-              <p className="t-label">{s.label}</p>
+-              <p className="t-num text-[15px] font-semibold text-foreground">{s.value}</p>
+-            </div>
+-          ))}
+-        </div>
+-      )}
+-
+-      {lastSync && (
+-        <p className="text-[11px] text-muted-foreground">
+-          Última sincronización: <span className="font-semibold text-foreground">{formatDateMedium(lastSync)}</span>
+-        </p>
+-      )}
+-
+-      {footer}
+-      <div className="mt-auto pt-1">{action}</div>
+-    </div>
+-  );
+-}
+diff --git a/src/pages/Investments.tsx b/src/pages/Investments.tsx
+--- a/src/pages/Investments.tsx
++++ b/src/pages/Investments.tsx
+@@ -58,6 +58,7 @@
+       total: active.reduce((a, i) => a + i.amount, 0),
+       dueSoonAmount: dueSoon.reduce((a, i) => a + i.amount, 0),
+       dueSoonCount: dueSoon.length,
++      unknownInterest: active.filter((i) => i.rateKnown === false).length,
+       interest: active.reduce((a, i) => a + i.estimatedInterest, 0),
+     };
+   }, [items]);
+@@ -73,8 +74,8 @@
+     Inicio: formatDateMedium(i.startDate),
+     Término: formatDateMedium(i.endDate),
+     "Días restantes": Math.max(0, daysUntil(i.endDate)),
+-    Tasa: `${i.rate}%`,
+-    "Interés estimado": i.estimatedInterest,
++    Tasa: i.rateKnown === false ? "No informada" : `${i.rate}%`,
++    "Interés estimado": i.rateKnown === false ? "No informado" : i.estimatedInterest,
+     Estado: INVESTMENT_STATUS_LABEL[i.status],
+   }));
+ 
+@@ -96,7 +97,7 @@
+           subtext={summary.dueSoonCount > 0 ? `${summary.dueSoonCount} inversiones` : "Sin vencimientos próximos"}
+           tone={summary.dueSoonCount > 0 ? "warning" : "success"}
+         />
+-        <KpiCard label="Intereses estimados" value={summary.interest} subtext="Al vencimiento" />
++        <KpiCard label="Intereses estimados" value={summary.interest} valueText={summary.unknownInterest ? "No disponible" : undefined} subtext={summary.unknownInterest ? `${summary.unknownInterest} inversiones sin tasa informada` : "Al vencimiento"} />
+         <KpiCard
+           label="Liquidez disponible"
+           value={dashboard?.kpis.availableCash ?? 0}
+@@ -224,8 +225,8 @@
+                 );
+               },
+             },
+-            { key: "rate", header: "Tasa", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px]">{i.rate.toFixed(1)}%</span> },
+-            { key: "interest", header: "Interés est.", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px] text-muted-foreground">{money(i.estimatedInterest)}</span> },
++            { key: "rate", header: "Tasa", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px]">{i.rateKnown === false ? "No informada" : `${i.rate.toFixed(1)}%`}</span> },
++            { key: "interest", header: "Interés est.", align: "right", hideBelow: "md", render: (i) => <span className="t-num text-[13px] text-muted-foreground">{i.rateKnown === false ? "No informado" : money(i.estimatedInterest)}</span> },
+             { key: "status", header: "Estado", align: "center", render: (i) => <StatusBadge label={INVESTMENT_STATUS_LABEL[i.status]} /> },
+           ]}
+         />
+@@ -250,8 +251,8 @@
+               <div className="grid grid-cols-2 gap-3">
+                 <InvestDetail label="Fecha de inicio" value={formatDateMedium(selected.startDate)} />
+                 <InvestDetail label="Fecha de término" value={formatDateMedium(selected.endDate)} />
+-                <InvestDetail label="Tasa anual" value={`${selected.rate.toFixed(1)}%`} />
+-                <InvestDetail label="Interés estimado" value={money(selected.estimatedInterest)} />
++                <InvestDetail label="Tasa anual" value={selected.rateKnown === false ? "No informada" : `${selected.rate.toFixed(1)}%`} />
++                <InvestDetail label="Interés estimado" value={selected.rateKnown === false ? "No informado" : money(selected.estimatedInterest)} />
+               </div>
+               <div className="flex items-center justify-between rounded-xl border border-[#EAEAEA] px-4 py-3">
+                 <span className="text-[12px] text-muted-foreground">Estado</span>
+diff --git a/src/pages/importations/ImportPreview.tsx b/src/pages/importations/ImportPreview.tsx
+--- a/src/pages/importations/ImportPreview.tsx
++++ b/src/pages/importations/ImportPreview.tsx
+@@ -8,7 +8,7 @@
+ import { formatMoney } from "@/financial-engine/format";
+ import { downloadFile, toCSV } from "@/lib/export";
+ 
+-const ENTITIES: Record<string, string> = { cash_flow: "Movimientos", invoice: "Facturas", customer: "Clientes", investment: "Inversiones", projection: "Proyecciones", reconciliation: "Conciliación (revisión manual)", unknown: "Sin clasificar" };
++const ENTITIES: Record<string, string> = { bank_account: "Cuentas y saldos", cash_flow: "Movimientos", invoice: "Facturas", customer: "Clientes", investment: "Inversiones", projection: "Proyecciones", reconciliation: "Conciliación (revisión manual)", unknown: "Sin clasificar" };
+ const FIELDS: Record<string, string> = { date: "Fecha", amount: "Monto", type: "Ingreso / egreso", description: "Descripción", bank: "Banco", account: "Cuenta", currency: "Moneda", amountDebe: "Debe (ingreso contable)", amountHaber: "Haber (egreso contable)", charge: "Cargo bancario (egreso)", credit: "Abono bancario (ingreso)", document: "Documento", customer: "Cliente", rut: "RUT", issueDate: "Fecha de emisión", dueDate: "Vencimiento", startDate: "Inicio inversión", endDate: "Término inversión", rate: "Tasa", interest: "Interés", status: "Estado" };
+ const LABELS: Record<string, string> = { VALID: "Listo", WARNING: "Revisar", ERROR: "No se importará", DUPLICATE: "Duplicado" };
+ 
+@@ -36,12 +36,13 @@
+         <label className="grid gap-1.5 text-xs font-medium">Mostrar<select className="t-input" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="">Todos los registros</option>{Object.entries(LABELS).map(([v, text]) => <option key={v} value={v}>{text}</option>)}</select></label>
+         <button className="t-button-secondary" onClick={() => downloadFile(toCSV(preview.records.filter((r) => r.status !== "VALID").map((r) => ({ Hoja: r.sheet, Fila: r.row, Estado: LABELS[r.status], Detalle: r.warnings }))), "revision-importacion.csv", "text/csv;charset=utf-8")}><Download size={15} /> Descargar revisión</button>
+       </div>
+-      {sheet && <details className="my-4 rounded-xl border bg-slate-50/70 p-4">
++      {sheet?.profile && <p className="my-4 rounded-xl bg-brand-soft p-4 text-sm"><strong>Formato {sheet.profile}.</strong> {sheet.note}</p>}
++      {sheet && !sheet.profile && <details className="my-4 rounded-xl border bg-slate-50/70 p-4">
+         <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold"><Settings2 size={16} /> Ajustar hoja y columnas <span className="ml-auto text-xs font-normal text-muted-foreground">{ENTITIES[sheet.entityType]}</span></summary>
+         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Si la detección no coincide con tu archivo, indica dónde están los encabezados y qué representa cada columna. Debe/Haber usa la convención contable; Cargo/Abono usa la cartola bancaria.</p>
+         <div className="my-4 grid gap-3 sm:grid-cols-3">
+           <label className="grid gap-1 text-xs">Destino<select className="t-input" value={selected.entityType ?? sheet.entityType} onChange={(e) => change({ entityType: e.target.value as ImportEntityType })}>{Object.entries(ENTITIES).map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>
+-          <label className="grid gap-1 text-xs">Fila de encabezados<input type="number" min={1} max={1000} className="t-input" value={selected.headerIndex ?? sheet.headerIndex} onChange={(e) => change({ headerIndex: Math.max(1, Number(e.target.value)), mapping: {} })} /></label>
++          <label className="grid gap-1 text-xs">Fila de encabezados<input type="number" min={1} max={1048576} className="t-input" value={selected.headerIndex ?? sheet.headerIndex} onChange={(e) => change({ headerIndex: Math.max(1, Number(e.target.value)), mapping: {} })} /></label>
+           <label className="grid gap-1 text-xs">Formato de números escritos como texto<select className="t-input" value={selected.numberLocale ?? "es-CL"} onChange={(e) => change({ numberLocale: e.target.value as "es-CL" | "en-US" })}><option value="es-CL">Chile: 1.234,56</option><option value="en-US">EE. UU.: 1,234.56</option></select></label>
+           <label className="flex items-center gap-2 self-end py-2 text-sm"><input type="checkbox" checked={!!selected.skip} onChange={(e) => change({ skip: e.target.checked })} /> Omitir esta hoja</label>
+         </div>
+@@ -54,7 +55,7 @@
+         { key: "detail", header: "Descripción / cliente", className: "!whitespace-normal min-w-[170px] max-w-[280px]", render: (r) => String(r.normalized.description || r.normalized.customer || r.normalized.document || "—") },
+         { key: "date", header: "Fecha", render: (r) => String(r.normalized.date || r.normalized.issueDate || r.normalized.startDate || "—") },
+         { key: "type", header: "Tipo", render: (r) => r.entityType === "cash_flow" || r.entityType === "projection" ? (r.normalized.type === "expense" ? "Egreso" : "Ingreso") : ENTITIES[r.entityType] },
+-        { key: "amount", header: "Monto original", align: "right", render: (r) => typeof r.normalized.amount === "number" ? formatMoney(r.normalized.amount, r.normalized.currency as "CLP") : "—" },
++        { key: "amount", header: "Monto original", align: "right", render: (r) => typeof (r.normalized.amount ?? r.normalized.balance) === "number" ? formatMoney((r.normalized.amount ?? r.normalized.balance) as number, r.normalized.currency as "CLP") : "—" },
+         { key: "status", header: "Estado", render: (r) => <StatusBadge label={LABELS[r.status]} tone={r.status === "VALID" ? "success" : r.status === "ERROR" ? "danger" : r.status === "WARNING" ? "warning" : "muted"} /> },
+         { key: "warnings", header: "Detalle", className: "!whitespace-normal min-w-[230px] max-w-[340px]", render: (r) => <span className="text-xs text-muted-foreground">{r.warnings || "Validación correcta"}</span> },
+       ]} />
+diff --git a/src/services/dataService.ts b/src/services/dataService.ts
+--- a/src/services/dataService.ts
++++ b/src/services/dataService.ts
+@@ -94,6 +94,9 @@
+ }
+ async function financialRows(table: string, fields: string[], configure?: (query: any) => any): Promise<any[]> {
+   const rows = await readRows(table, configure);
++  return convertFinancialRows(rows, fields);
++}
++async function convertFinancialRows(rows: any[], fields: string[]): Promise<any[]> {
+   if (!rows.some((r) => r.currency && r.currency !== "CLP")) return rows;
+   const rates = await rateMap();
+   return rows.map((r) => {
+@@ -157,6 +160,7 @@
+   currency: r.currency,
+   startDate: r.start_date,
+   endDate: r.end_date,
++  rateKnown: r.rate_known !== false,
+   rate: Number(r.rate ?? 0),
+   estimatedInterest: Number(r.estimated_interest ?? 0),
+   status: r.status,
+@@ -232,9 +236,12 @@
+ export const dataService = {
+   /** Dashboard bundle. Accepts an optional date range (period selector). */
+   async getDashboard(from?: string, to?: string): Promise<DashboardData> {
+-    const [banks, accounts, flow, invoices, investments, projections] = await Promise.all([
+-      this.getBanks(), this.getBankAccounts(), this.getCashFlow(), this.getInvoices(), this.getInvestments(), this.getProjections(),
++    const [banks, accounts, originalFlow, invoices, investments, projections] = await Promise.all([
++      this.getBanks(), this.getBankAccounts(), this.getMovementsFiltered({}), this.getInvoices(), this.getInvestments(), this.getProjections(),
+     ]);
++    // Settled historical entries are displayed in their source currency. They
++    // are already reflected in bank balances and must not enter projections.
++    const flow: CashFlow[] = await convertFinancialRows(originalFlow.filter((m) => !["conciliado","pagado","cancelado","borrador"].includes(m.status)), ["amount"]);
+     const future: CashFlow[] = [...flow, ...projections.filter((p) => p.status !== "cancelado" && p.status !== "borrador").map((p) => ({ ...p, bankId: p.bankId ?? "", origin: "projection" as const }))];
+ 
+     const available = openingBalance(accounts);
+@@ -280,7 +287,7 @@
+       projectionWeekly: aggregateProjection(projection, "weekly"),
+       projectionMonthly: aggregateProjection(projection, "monthly"),
+       positions: bankPositions(banks, accounts, investments),
+-      movements: recentMovements(flow, 8),
++      movements: recentMovements(originalFlow, 8),
+       receivables: receivablesSummary(invoices, todayISO()),
+       aging: agingBuckets(invoices, todayISO()),
+       upcomingPayments: derivePayments(flow),
+@@ -344,7 +351,7 @@
+   },
+ 
+   async getPayments(): Promise<Payment[]> {
+-    const flow = await dataService.getCashFlow();
++    const flow = (await financialRows("cash_flow", ["amount"], (q) => q.eq("type", "expense"))).map(toCashFlow);
+     return derivePayments(flow);
+   },
+ 
+@@ -390,14 +397,16 @@
+     bankId?: string;
+     category?: CashFlowCategory;
+     type?: CashFlowType;
++    status?: string;
+   }): Promise<CashFlow[]> {
+-    const data = await financialRows("cash_flow", ["amount"], (query) => {
++    const data = await readRows("cash_flow", (query) => {
+     let q = query;
+     if (filters.from) q = q.gte("date", filters.from);
+     if (filters.to) q = q.lte("date", filters.to);
+     if (filters.bankId) q = q.eq("bank_id", filters.bankId);
+     if (filters.category) q = q.eq("category", filters.category);
+     if (filters.type) q = q.eq("type", filters.type);
++    if (filters.status) q = q.eq("status", filters.status);
+     return q;
+     });
+     return data.map(toCashFlow).sort((a,b) => b.date.localeCompare(a.date));
+diff --git a/src/services/importService.ts b/src/services/importService.ts
+--- a/src/services/importService.ts
++++ b/src/services/importService.ts
+@@ -1,6 +1,6 @@
+ /* eslint-disable @typescript-eslint/no-explicit-any */
+ import { supabase } from "@/integrations/supabase/client";
+-import type { ImportBatch, ImportRecord, ImportRecordStatus, SyncSource, SyncHistory } from "@/financial-engine/types";
++import type { ImportBatch, ImportRecord, ImportRecordStatus, SyncHistory } from "@/financial-engine/types";
+ import { MAX_FILE_BYTES, type ImportSummary } from "@/import-engine/types";
+ import type { ImportOverrides, ImportPreview } from "@/import-engine/types";
+ 
+@@ -33,14 +33,14 @@
+   const buffer = await file.arrayBuffer();
+   const digest = await crypto.subtle.digest("SHA-256", buffer);
+   const originalHash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+-  const effective = new TextEncoder().encode(originalHash + JSON.stringify(overrides));
++  const effective = new TextEncoder().encode("sonacol-v1:" + originalHash + JSON.stringify(overrides));
+   const fileHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", effective)), (b) => b.toString(16).padStart(2, "0")).join("");
+   return new Promise((resolve, reject) => {
+     const worker = new Worker(new URL("../workers/xlsx.worker.ts", import.meta.url), { type: "module" });
+     const cleanup = () => { worker.terminate(); clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+     const fail = (reason: string) => { cleanup(); reject(new Error(reason)); };
+     const abort = () => fail("Análisis cancelado.");
+-    const timer = setTimeout(() => fail("El análisis superó dos minutos. Divide el libro o elimina filas vacías con formato."), 120000);
++    const timer = setTimeout(() => fail("El análisis superó dos minutos. Vuelve a intentarlo y comprueba que usas la versión actualizada del importador."), 120000);
+     signal?.addEventListener("abort", abort, { once: true });
+     if (signal?.aborted) return abort();
+     worker.onmessage = ({ data }) => {
+@@ -88,15 +88,11 @@
+       if (!data || data.length < 500) return result;
+     }
+   },
+-  async getSyncSources(): Promise<SyncSource[]> {
+-    const { data, error } = await db.from("sync_sources").select("*").order("created_at");
+-    if (error) throw new Error(message(error));
+-    return (data ?? []).map((r: any) => ({ id: r.id, source: r.source, name: r.name, status: r.status, enabled: r.enabled, lastSyncAt: r.last_sync_at, recordsSynced: r.records_synced, errors: r.errors }));
+-  },
+-  async getSyncHistory(): Promise<SyncHistory[]> {
+-    const { data, error } = await db.from("sync_history").select("*").order("synced_at", { ascending: false }).limit(30);
+-    if (error) throw new Error(message(error));
+-    return (data ?? []).map((r: any) => ({ id: r.id, source: r.source, records: r.records, durationSeconds: Number(r.duration_seconds), status: r.status, errorMessage: r.error_message, syncedAt: r.synced_at }));
++  async getIntegrationStatus(): Promise<{records:number;lastSyncAt:string|null;errors:number;history:SyncHistory[]}> {
++    const {data,error}=await db.rpc("get_excel_import_status");
++    if(error) throw new Error(message(error));
++    return {records:Number(data.records),lastSyncAt:data.last_sync_at,errors:Number(data.errors),
++      history:data.history.map((r:any)=>({id:r.id,source:r.source,records:Number(r.records),durationSeconds:Number(r.duration_seconds),status:r.status,errorMessage:r.error_message,syncedAt:r.synced_at,verified:r.verified}))};
+   },
+   async runSync(source: "erp" | "excel" | "banks"): Promise<void> {
+     throw new Error(source === "excel" ? "Ve a Importaciones y selecciona un archivo para actualizar tus datos." : "Esta integración todavía no tiene un conector configurado. No se sincronizaron registros.");
+diff --git a/tests/database.test.ts b/tests/database.test.ts
+--- a/tests/database.test.ts
++++ b/tests/database.test.ts
+@@ -14,7 +14,7 @@
+     create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb);
+     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+     grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
+-  for(const file of ["20260913024822000_schema_v1.sql","20260913062654000_data_platform_v2.sql","20260914000000000_import_integrity.sql"]){
++  for(const file of ["20260913024822000_schema_v1.sql","20260913062654000_data_platform_v2.sql","20260914000000000_import_integrity.sql","20260914010000000_sonacol_workbook.sql"]){
+     let sql=await readFile(`supabase/migrations/${file}`,"utf8");
+     sql=sql.replace(/^alter publication.*$/gm,""); // PGlite has no replication; unrelated to import SQL.
+     await db.exec(sql);
+@@ -36,3 +36,30 @@
+ test("database: trace failure rolls back the entire request",async()=>{await assert.rejects(run("rollback.xlsx",[{...row({description:"Must rollback"}),row:"bad"}]));assert.equal((await db.query("select * from cash_flow where description='Must rollback'")).rows.length,0);assert.equal((await db.query("select * from import_batches where file_name='rollback.xlsx'")).rows.length,0);});
+ test("database: read-only role cannot import or self-promote",async()=>{await db.exec(`set request.jwt.claim.sub='${reader}'`);await assert.rejects(run("forbidden.xlsx",[row()]),/rol no permite/);await assert.rejects(db.exec(`update profiles set role='administrador' where id='${reader}'`),/administrador/);await db.exec(`set request.jwt.claim.sub='${writer}'`);});
+ test("database: new registrations default to consulta",async()=>{const r=await db.query("select role from profiles where id=$1",[reader]);assert.equal(r.rows[0].role,"consulta");});
++
++test("database: ledger source identity preserves equal postings and deduplicates a later file",async()=>{
++  const records=[1,2].map(i=>row({description:"Repeated ledger posting",sourceId:`ledger:occurrence:${i}`}));
++  const first=await run("repeated-ledger.xlsx",records),second=await run("repeated-ledger-next.xlsx",records);
++  assert.equal(first.imported_records,2);assert.equal(second.imported_records,0);assert.equal(second.duplicate_records,2);
++});
++const account=(changes:Record<string,unknown>={})=>({...row(),entityType:"bank_account",normalized:{bank:"Snapshot bank",ledgerCode:"TEST001",account:null,date:"2026-09-12",balance:500,reconciledBalance:500,currency:"CLP",...changes}});
++test("database: account snapshots create real balances without inventing account numbers",async()=>{
++  const batch=await run("snapshot.xlsx",[account()]);assert.equal(batch.imported_records,1);
++  const r=(await db.query("select * from bank_accounts where ledger_code='TEST001'")).rows[0];
++  assert.equal(Number(r.balance),500);assert.equal(r.account_number,null);
++});
++test("database: newer account snapshot updates once; stale and conflicting snapshots preserve it",async()=>{
++  assert.equal((await run("snapshot-new.xlsx",[account({date:"2026-09-13",balance:600})])).imported_records,1);
++  assert.equal((await run("snapshot-stale.xlsx",[account({date:"2026-09-11",balance:300})])).error_records,1);
++  assert.equal((await run("snapshot-conflict.xlsx",[account({date:"2026-09-13",balance:700})])).error_records,1);
++  const r=(await db.query("select * from bank_accounts where ledger_code='TEST001'")).rows;
++  assert.equal(r.length,1);assert.equal(Number(r[0].balance),600);
++});
++test("database: seeded Success history is explicitly unverified; deleted entities stop counting",async()=>{
++  const status=async()=> (await db.query<{s:{records:number;history:{verified:boolean;status:string}[]}}>("select get_excel_import_status() s")).rows[0].s;
++  const before=await status();assert.ok(before.history.some(h=>h.status==="Unverified"&&!h.verified));
++  const b=await run("metrics.xlsx",[row({description:"Metrics entity"})]);assert.equal(b.imported_records,1);
++  const loaded=await status();assert.equal(Number(loaded.records),Number(before.records)+1);
++  await db.exec("delete from cash_flow where description='Metrics entity'");
++  const deleted=await status();assert.equal(deleted.records,before.records);assert.ok(deleted.history.some(h=>h.verified&&h.status==="Warning"));
++});
+diff --git a/tests/import.test.ts b/tests/import.test.ts
+--- a/tests/import.test.ts
++++ b/tests/import.test.ts
+@@ -40,3 +40,119 @@
+ test("CSV protects formula cells while keeping numeric negatives numeric", () => { const csv=toCSV([{Name:"=HYPERLINK(\"x\")",Amount:-12}]); assert.match(csv,/'=HYPERLINK/); assert.match(csv,/;-12/); });
+ 
+ test("ambiguous text separators respect the selected locale",()=>{ assert.equal(cellToNumber("1,234","en-US"),1234); assert.equal(cellToNumber("1,234","es-CL"),1.234); assert.equal(cellToNumber("1.234","en-US"),1.234); assert.equal(cellToNumber("1.234","es-CL"),1234); });
++
++// Change the XML inside a real workbook: writing an inflated !ref directly would
++// make the fixture generator itself walk billions of empty coordinates.
++function workbookWithSheetXml(transform: (xml: string) => string, bookType: "xlsx" | "xlsm" = "xlsx"): ArrayBuffer {
++  const wb = XLSX.utils.book_new();
++  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
++    headers, ["13/09/2026", "Cobro", 45000, 0, "BCI", "CLP"],
++  ]), "Movimientos");
++  const archive = XLSX.CFB.read(XLSX.write(wb, { type: "buffer", bookType }), { type: "buffer" });
++  const name = "/xl/worksheets/sheet1.xml";
++  const xml = Buffer.from(XLSX.CFB.find(archive, name).content).toString("utf8");
++  XLSX.CFB.utils.cfb_add(archive, name, Buffer.from(transform(xml)));
++  const bytes: Buffer = XLSX.CFB.write(archive, { type: "buffer", fileType: "zip", compression: true });
++  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
++}
++
++for (const bookType of ["xlsx", "xlsm"] as const) test(`${bookType}: full Excel dimensions and styled empty cells do not require editing the file`, async () => {
++  const input = workbookWithSheetXml((xml) => xml
++    .replace(/<dimension ref="[^"]+"\s*\/>/, '<dimension ref="A1:XFD1048576"/>')
++    .replace("</sheetData>", '<row r="1048576"><c r="XFD1048576" s="0"/></row></sheetData>'), bookType);
++  const original = new Uint8Array(input).slice();
++  const sheets = await parseWorkbook(input);
++  const result = processWorkbook(sheets);
++  assert.deepEqual(new Uint8Array(input), original);
++  assert.equal(sheets[0].rows.length, 2);
++  assert.equal(result.valid, 1);
++  assert.equal(result.total, 1);
++  assert.equal(result.records[0].row, 2);
++  assert.equal(result.records[0].normalized.amount, 45000);
++});
++
++test("real data after a large blank gap retains its Excel row number", async () => {
++  const input = workbookWithSheetXml((xml) => xml
++    .replace(/<dimension ref="[^"]+"\s*\/>/, '<dimension ref="A1:F1048576"/>')
++    .replace(/(<row r=")2(")/g, (_, before, after) => before + "1048576" + after)
++    .replace(/(<c r="[A-F])2(")/g, (_, before, after) => before + "1048576" + after));
++  const sheets = await parseWorkbook(input);
++  assert.equal(sheets[0].rows.length, 2);
++  const result = processWorkbook(sheets);
++  assert.equal(result.valid, 1);
++  assert.equal(result.records[0].row, 1048576);
++});
++
++test("columns beyond IV are read and keep their original column identities", async () => {
++  const letters = ["IW", "IX", "IY", "IZ", "JA", "JB"];
++  const input = workbookWithSheetXml((xml) => xml
++    .replace(/<dimension ref="[^"]+"\s*\/>/, '<dimension ref="IW1:JB2"/>')
++    .replace(/(<c r=")([A-F])([12]")/g, (_, before, col, after) => before + letters[col.charCodeAt(0) - 65] + after));
++  const result = processWorkbook(await parseWorkbook(input));
++  assert.equal(result.valid, 1);
++  assert.equal(result.sheets[0].columns.find((col) => col.key === "date")?.index, 256);
++  assert.equal(result.records[0].raw["Debe [259]"], "45000");
++});
++
++test("manual header selection uses the original Excel row after blank rows", async () => {
++  const input = workbookWithSheetXml((xml) => xml
++    .replace(/<dimension ref="[^"]+"\s*\/>/, '<dimension ref="A1:F50002"/>')
++    .replace(/(<row r=")([12])(")/g, (_, before, row, after) => before + (50000 + Number(row)) + after)
++    .replace(/(<c r="[A-F])([12])(")/g, (_, before, row, after) => before + (50000 + Number(row)) + after));
++  const sheets = await parseWorkbook(input);
++  for (const overrides of [{}, { Movimientos: { headerIndex: 50001 } }]) {
++    const result = processWorkbook(sheets, undefined, overrides);
++    assert.equal(result.sheets[0].headerIndex, 50001);
++    assert.equal(result.valid, 1);
++    assert.equal(result.records[0].row, 50002);
++  }
++});
++
++test("a real value in a distant column is preserved in trace data", async () => {
++  const input = workbookWithSheetXml((xml) => xml
++    .replace(/<dimension ref="[^"]+"\s*\/>/, '<dimension ref="A1:XFD2"/>')
++    .replace(/(<row r="2"[^>]*>)([\s\S]*?)(<\/row>)/, '$1$2<c r="XFD2" t="str"><v>Referencia original</v></c>$3'));
++  const result = processWorkbook(await parseWorkbook(input));
++  assert.equal(result.valid, 1);
++  assert.equal(result.records[0].raw["Columna 16384 [16384]"], "Referencia original");
++});
++
++test("format-only sheets are ignored even when their declared dimensions fill Excel", async () => {
++  const input = workbookWithSheetXml((xml) => xml
++    .replace(/<dimension ref="[^"]+"\s*\/>/, '<dimension ref="A1:XFD1048576"/>')
++    .replace(/<sheetData>[\s\S]*?<\/sheetData>/, '<sheetData><row r="1048576"><c r="XFD1048576" s="0"/></row></sheetData>'));
++  assert.deepEqual(await parseWorkbook(input), []);
++});
++
++test("formula-only rows without cached results are reported instead of silently skipped", () => {
++  const result = flow([headers, [undefined, undefined, { t: "n", f: "SUM(A1:A2)" }]]);
++  assert.equal(result.total, 1);
++  assert.equal(result.error, 1);
++  assert.match(result.records[0].warnings, /no tiene resultado/);
++});
++
++test("xls: inflated BIFF dimensions do not make a small workbook exceed the reading area", async () => {
++  const wb = XLSX.utils.book_new();
++  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
++    headers, ["13/09/2026", "Cobro", 45000, 0, "BCI", "CLP"],
++  ]), "Movimientos");
++  const archive = XLSX.CFB.read(XLSX.write(wb, { type: "buffer", bookType: "xls" }), { type: "buffer" });
++  const stream = Buffer.from(XLSX.CFB.find(archive, "/Workbook").content);
++  let dimensionsUpdated = 0;
++  for (let offset = 0; offset + 4 <= stream.length;) {
++    const id = stream.readUInt16LE(offset), length = stream.readUInt16LE(offset + 2);
++    if (id === 0x0200 && length === 14) {
++      stream.writeUInt32LE(65536, offset + 8);
++      stream.writeUInt16LE(256, offset + 14);
++      dimensionsUpdated++;
++    }
++    offset += 4 + length;
++  }
++  assert.equal(dimensionsUpdated, 1);
++  XLSX.CFB.utils.cfb_add(archive, "/Workbook", stream);
++  const bytes: Buffer = XLSX.CFB.write(archive, { type: "buffer", fileType: "cfb" });
++  const input = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
++  const sheets = await parseWorkbook(input);
++  assert.equal(sheets[0].rows.length, 2);
++  assert.equal(processWorkbook(sheets).valid, 1);
++});
+diff --git a/tests/sonacol.test.ts b/tests/sonacol.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/sonacol.test.ts
+@@ -0,0 +1,60 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import * as XLSX from "xlsx";
++import { readSonacol, SONACOL_SHEETS } from "../src/import-engine/sonacol.ts";
++import { parseWorkbook, processWorkbook } from "../src/import-engine/pipeline.ts";
++
++// Synthetic data only. No customer records or account numbers from user files.
++function fixture() {
++  const wb=XLSX.utils.book_new();
++  const put=(s:string,a:string,v:string|number)=>{wb.Sheets[s][a]={t:typeof v==="number"?"n":"s",v};};
++  for(const s of [...SONACOL_SHEETS,"MACRO BANCOS","REPORTE"]) XLSX.utils.book_append_sheet(wb,{"!ref":"A1:AB60"},s);
++  const headings:Record<string,Record<string,string>>={BANCO:{F:"FechaDocumento",J:"CtaCodigo",Z:"TesDocMontoImpuDebe",AA:"TesDocMontoImpuHaber"},BASE:{A:"TABLA ORIGEN",P:"DEBE",Q:"HABER"},CLIENTES:{F:"RutCliente",N:"NúmeroDocumento",T:"MontoImputacionDebe"},COLOCACIONES:{F:"RutCliente",T:"MontoImputacionDebe",Q:"FechaVencimiento"},PROYEC:{B:"FECHA",F:"DEBE",G:"HABER"}};
++  for(const [s,headers] of Object.entries(headings)) for(const [c,v] of Object.entries(headers)) put(s,c+"8",v);
++  for(const r of [9,10]) for(const [c,v] of Object.entries({B:1,C:1,D:1,E:125,F:46276,G:301,H:1,I:2,J:511010014,K:"Banco Itau $",L:1,U:"Pago",Z:0,AA:100})) put("BANCO",c+r,v);
++  put("BASE","A9","BANCO");put("BASE","S9","CONCILIADO");wb.Sheets.BASE.D9={t:"n",v:46276,f:"BANCO!F9"};
++  for(const [r,label,code] of [[10,"ITAU $",511010014],[11,"ITAU",511010016]] as const) {put("INVERSIONES","A"+r,label);put("INVERSIONES","B"+r,code+"   "+(label==="ITAU"?"Corpbanca":"Banco Itau $"));}
++  put("INVERSIONES","H28","ITAU");put("INVERSIONES","J28","000111");put("INVERSIONES","H29","ITAU $");put("INVERSIONES","J29","000222");
++  put("CUADRATURA BANCOS","B6","SALDOS BANCOS SONACOL AL");put("CUADRATURA BANCOS","F6",46277);
++  put("CUADRATURA BANCOS","B9","Itau $ 000222");put("CUADRATURA BANCOS","C9","Corpbanca 000111");
++  put("CUADRATURA BANCOS","A11","SALDO CONCILIADO");put("CUADRATURA BANCOS","A12","SALDO CONTABLE");
++  for(const c of ["B","C"]) for(const r of [11,12]) put("CUADRATURA BANCOS",c+r,500);
++  for(const [c,v] of Object.entries({F:"11111111-1",G:"Cliente de prueba",N:123,O:"CLP",P:46265,Q:46279,T:500,V:500})) put("CLIENTES",c+"9",v);
++  for(const [c,v] of Object.entries({G:"BCI",K:"FF.MM.",O:0,P:46265,Q:46279,T:1000,V:1000})) put("COLOCACIONES",c+"9",v);
++  wb.Sheets.CLIENTES.AA5000={t:"e",v:42};wb.Sheets.COLOCACIONES.AA5000={t:"e",v:42};
++  put("PROYEC","A9",1);put("PROYEC","H9",0);put("PROYEC","J9","PROVEEDORES");
++  put("PROYEC","E10",46279);put("PROYEC","G10",200);put("PROYEC","J10","PROVEEDORES");
++  put("REPORTE","A1","Total general");put("REPORTE","B1",123456);
++  return wb;
++}
++test("SONACOL: source tables produce entities, staging and zero templates do not",()=>{
++  const result=processWorkbook(readSonacol(fixture()));
++  assert.equal(result.total,7);assert.equal(result.error,0);assert.equal(result.duplicate,0);
++  assert.equal(result.records.filter(r=>r.entityType==="cash_flow").length,2);
++  assert.ok(result.sheets.find(s=>s.name==="REPORTE")?.note);
++  assert.equal(result.records.find(r=>r.entityType==="cash_flow")?.normalized.status,"conciliado");
++  const accounts=result.records.filter(r=>r.entityType==="bank_account");
++  assert.deepEqual(accounts.map(r=>r.normalized.account),["000222","000111"]);
++  const fund=result.records.find(r=>r.entityType==="investment")!;
++  assert.equal(fund.normalized.currency,"CLP");assert.equal(fund.normalized.rateKnown,false);assert.equal(fund.status,"WARNING");
++});
++test("SONACOL: equal ledger postings retain multiplicity and stable identity",()=>{
++  const first=processWorkbook(readSonacol(fixture())).records.filter(r=>r.entityType==="cash_flow");
++  const second=processWorkbook(readSonacol(fixture())).records.filter(r=>r.entityType==="cash_flow");
++  assert.notEqual(first[0].dedupeKey,first[1].dedupeKey);assert.deepEqual(first.map(r=>r.dedupeKey),second.map(r=>r.dedupeKey));
++  assert.equal(first.reduce((n,r)=>n+Number(r.normalized.amount),0),200);
++});
++test("SONACOL: business-cell errors and changed layouts are never silently accepted",()=>{
++  const wb=fixture();wb.Sheets.BANCO.Z9={t:"e",v:42};
++  assert.equal(processWorkbook(readSonacol(wb)).error,1);
++  delete wb.Sheets.CLIENTES.F8;assert.throws(()=>readSonacol(wb),/cambió la estructura/);
++});
++test("SONACOL: error-filled macro range is not parsed as a million transactions",async()=>{
++  const wb=fixture();
++  const archive=XLSX.CFB.read(XLSX.write(wb,{type:"buffer",bookType:"xlsm"}),{type:"buffer"});
++  const path="/xl/worksheets/sheet8.xml",xml=Buffer.from(XLSX.CFB.find(archive,path).content).toString();
++  XLSX.CFB.utils.cfb_add(archive,path,Buffer.from(xml.replace(/<dimension ref="[^"]+"\s*\/>/,'<dimension ref="A1:XFD1048576"/>').replace("</sheetData>",'<row r="1048576"><c r="A1048576" t="e"><v>#N/A</v></c></row></sheetData>')));
++  const bytes:Buffer=XLSX.CFB.write(archive,{type:"buffer",fileType:"zip",compression:true});
++  const original=Buffer.from(bytes);const parsed=await parseWorkbook(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength));
++  assert.equal(processWorkbook(parsed).total,7);assert.deepEqual(bytes,original);
++});
+diff --git a/supabase/migrations/20260914010000000_sonacol_workbook.sql b/supabase/migrations/20260914010000000_sonacol_workbook.sql
+new file mode 100644
+--- /dev/null
++++ b/supabase/migrations/20260914010000000_sonacol_workbook.sql
+@@ -0,0 +1,220 @@
++-- Additive upgrade. Apply after import_integrity. Never replay cleanup migrations.
++alter table public.bank_accounts add column if not exists ledger_code text;
++alter table public.bank_accounts add column if not exists balance_date date;
++alter table public.bank_accounts alter column account_number drop not null;
++alter table public.investments add column if not exists rate_known boolean not null default true;
++alter table public.sync_history add column if not exists import_batch_id uuid references public.import_batches(id);
++
++create or replace function public.import_treasury_records(p_file_name text, p_file_hash text, p_records jsonb)
++returns jsonb language plpgsql security invoker set search_path = public, pg_temp as $$
++declare
++  v_batch public.import_batches%rowtype;
++  v_rec jsonb; n jsonb; v_kind text; v_status text; v_warning text;
++  v_entity uuid; v_bank uuid; v_customer uuid; v_record uuid;
++  v_key text; v_name text; v_rut text; v_currency text; v_type text; v_entity_status text;
++  v_amount numeric; v_date date; v_issue date; v_due date;
++  v_actor text; v_existing int; v_start timestamptz := clock_timestamp();
++begin
++  if auth.uid() is null or coalesce(public.current_role(),'') not in ('administrador','tesoreria') then
++    raise exception 'Tu rol no permite importar archivos.' using errcode = '42501';
++  end if;
++  if p_file_name is null or length(trim(p_file_name)) = 0 or length(p_file_name) > 255
++    or p_file_hash is null or p_file_hash !~ '^[a-f0-9]{64}$' then raise exception 'Archivo o huella inválidos.'; end if;
++  if jsonb_typeof(p_records) is distinct from 'array' then raise exception 'Registros inválidos.'; end if;
++  if jsonb_array_length(p_records) < 1 or jsonb_array_length(p_records) > 20000 or octet_length(p_records::text) > 25000000 then
++    raise exception 'El lote debe contener entre 1 y 20.000 filas y no superar 25 MB de datos.';
++  end if;
++  -- Serialize imports for this single-company installation; covers different files with overlapping rows.
++  perform pg_advisory_xact_lock(728394106);
++  select * into v_batch from public.import_batches where file_hash = p_file_hash;
++  if found then return to_jsonb(v_batch); end if;
++  select coalesce(name,email,'Usuario') into v_actor from public.profiles where id = auth.uid();
++  insert into public.import_batches(file_name,file_hash,source,uploaded_by,uploaded_by_id,status,total_records)
++  values(p_file_name,p_file_hash,'excel',v_actor,auth.uid(),'processing',jsonb_array_length(p_records)) returning * into v_batch;
++
++  for v_rec in select value from jsonb_array_elements(p_records) loop
++    n := v_rec->'normalized'; v_kind := v_rec->>'entityType';
++    v_status := coalesce(v_rec->>'status','ERROR'); v_warning := coalesce(v_rec->>'warnings','');
++    v_entity := null; v_bank := null; v_customer := null; v_key := null;
++    if v_status not in ('VALID','WARNING','ERROR','DUPLICATE') then v_status := 'ERROR'; end if;
++    if v_kind is null or v_kind not in ('customer','invoice','cash_flow','investment','projection','bank_account') then
++      v_status := 'ERROR'; v_warning := 'Destino no compatible: revisa el tipo de hoja.';
++    end if;
++    if v_status in ('VALID','WARNING') then
++      -- Per-row savepoint: a failed invoice never leaves orphan banks/customers behind.
++      begin
++        if jsonb_typeof(n) is distinct from 'object' then raise exception 'Datos normalizados inválidos'; end if;
++        v_currency := coalesce(nullif(n->>'currency',''),'CLP');
++        if v_currency not in ('CLP','USD','UF','UTM') then raise exception 'Moneda no compatible'; end if;
++        v_type := coalesce(n->>'type','income');
++        v_amount := nullif(n->>'amount','')::numeric;
++        if v_kind not in ('customer','bank_account') and (v_amount is null or v_amount <= 0 or v_amount::text in ('NaN','Infinity','-Infinity')) then raise exception 'Monto inválido'; end if;
++        v_name := nullif(trim(n->>'customer'),'');
++        v_rut := nullif(upper(regexp_replace(coalesce(n->>'rut',''),'[^0-9kK]','','g')),'');
++        -- Compute identity on the server; ignore any client-supplied dedupe key.
++        v_key := md5(jsonb_build_array(v_kind, n->>'document', lower(v_name), v_rut,
++          n->>'account', lower(n->>'bank'), v_currency, v_amount, v_type,
++          n->>'date', n->>'issueDate', n->>'dueDate', n->>'startDate', n->>'endDate',
++          n->>'description', n->>'rate', n->>'interest')::text);
++        if nullif(n->>'sourceId','') is not null then v_key := md5(v_key || ':' || (n->>'sourceId')); end if;
++        if v_kind='bank_account' then v_key := md5(v_key || jsonb_build_array(n->>'ledgerCode',n->>'balance',n->>'reconciledBalance')::text); end if;
++        if exists(select 1 from public.import_records where dedupe_key=v_key and entity_id is not null and status in ('VALID','WARNING')) then
++          v_status := 'DUPLICATE'; v_warning := 'Registro ya importado en un archivo anterior.';
++        else
++          if v_kind in ('customer','invoice') then
++            if v_name is null then raise exception 'Falta el nombre del cliente'; end if;
++            if v_rut is not null then
++              select count(*), (array_agg(id))[1] into v_existing,v_customer from public.customers
++              where upper(regexp_replace(coalesce(rut,''),'[^0-9kK]','','g'))=v_rut;
++            else
++              select count(*), (array_agg(id))[1] into v_existing,v_customer from public.customers where lower(trim(name))=lower(v_name);
++            end if;
++            if v_existing > 1 then raise exception 'Cliente ambiguo: revisa los clientes duplicados antes de importar'; end if;
++            if v_customer is null then
++              insert into public.customers(name,rut,type,status) values(v_name,nullif(n->>'rut',''),'Importado','activo') returning id into v_customer;
++            end if;
++          end if;
++          if v_kind in ('cash_flow','projection','investment','bank_account') and nullif(trim(n->>'bank'),'') is not null then
++            select count(*),(array_agg(id))[1] into v_existing,v_bank from public.banks where lower(trim(name))=lower(trim(n->>'bank'));
++            if v_existing > 1 then raise exception 'Banco ambiguo: revisa el catálogo de bancos'; end if;
++            if v_bank is null then insert into public.banks(name,status) values(trim(n->>'bank'),'activo') returning id into v_bank; end if;
++          end if;
++          v_entity_status := nullif(n->>'status','');
++          case v_kind
++          when 'bank_account' then
++            v_date := nullif(n->>'date','')::date;
++            if v_bank is null or nullif(n->>'ledgerCode','') is null or v_date is null or v_date < date '2000-01-01' or v_date > date '2100-12-31' then raise exception 'Banco, código contable o fecha de saldo inválidos'; end if;
++            if (n->>'balance')::numeric is null or (n->>'reconciledBalance')::numeric is null or
++              (n->>'balance')::numeric::text in ('NaN','Infinity','-Infinity') or (n->>'reconciledBalance')::numeric::text in ('NaN','Infinity','-Infinity') then raise exception 'Saldos inválidos'; end if;
++            select count(*),(array_agg(id))[1] into v_existing,v_entity from public.bank_accounts
++              where bank_id=v_bank and currency=v_currency and
++                (ledger_code=n->>'ledgerCode' or (nullif(n->>'account','') is not null and account_number=n->>'account'));
++            if v_existing > 1 then raise exception 'Cuenta ambigua: revisa cuentas duplicadas'; end if;
++            if v_entity is null then
++              insert into public.bank_accounts(bank_id,account_number,ledger_code,currency,balance,reconciled_balance,balance_date,last_reconciliation)
++              values(v_bank,nullif(n->>'account',''),n->>'ledgerCode',v_currency,(n->>'balance')::numeric,(n->>'reconciledBalance')::numeric,v_date,v_date) returning id into v_entity;
++            else
++              if exists(select 1 from public.bank_accounts where id=v_entity and (greatest(balance_date,last_reconciliation)>v_date or
++                (balance_date=v_date and (balance<>(n->>'balance')::numeric or reconciled_balance<>(n->>'reconciledBalance')::numeric)))) then
++                raise exception 'Ya existe un saldo más reciente o diferente para la misma fecha; se conserva el saldo guardado';
++              end if;
++              update public.bank_accounts set account_number=coalesce(nullif(n->>'account',''),account_number),ledger_code=n->>'ledgerCode',
++                balance=(n->>'balance')::numeric,reconciled_balance=(n->>'reconciledBalance')::numeric,balance_date=v_date,last_reconciliation=v_date where id=v_entity;
++            end if;
++          when 'customer' then
++            v_entity := v_customer;
++          when 'invoice' then
++            if nullif(n->>'document','') is null or n->>'document'='0' then raise exception 'Documento inválido'; end if;
++            v_issue := nullif(n->>'issueDate','')::date; v_due := nullif(n->>'dueDate','')::date;
++            if v_issue is null or v_due is null or v_due < v_issue or v_issue < date '2000-01-01' or v_due > date '2100-12-31' then raise exception 'Fechas de factura inválidas'; end if;
++            v_entity_status := coalesce(v_entity_status,case when v_due < current_date then 'vencido' else 'por_vencer' end);
++            if v_entity_status not in ('por_vencer','vencido','pagado','vence_pronto') then raise exception 'Estado de factura inválido'; end if;
++            if exists(select 1 from public.invoices where customer_id=v_customer and document=n->>'document') then raise exception 'Ya existe este documento para el cliente. Revisa la factura existente'; end if;
++            insert into public.invoices(customer_id,document,issue_date,due_date,amount,currency,status)
++            values(v_customer,n->>'document',v_issue,v_due,v_amount,v_currency,v_entity_status) returning id into v_entity;
++          when 'cash_flow' then
++            v_date := nullif(n->>'date','')::date;
++            if v_date is null or v_date < date '2000-01-01' or v_date > date '2100-12-31' then raise exception 'Fecha de movimiento inválida'; end if;
++            v_entity_status := coalesce(v_entity_status,'conciliado');
++            if v_entity_status not in ('conciliado','confirmado','programado','pendiente','proyectado','borrador','pagado','cancelado','vencido') then raise exception 'Estado de movimiento inválido'; end if;
++            insert into public.cash_flow(date,type,category,description,amount,currency,bank_id,status,origin)
++            values(v_date,v_type,coalesce(nullif(n->>'category',''),case when v_type='expense' then 'supplier' else 'other_income' end),coalesce(nullif(n->>'description',''),'Movimiento importado'),v_amount,v_currency,v_bank,v_entity_status,'excel') returning id into v_entity;
++            -- Accounts use the full identifier; masking belongs to presentation only.
++            if v_bank is not null and nullif(n->>'account','') is not null and not exists
++              (select 1 from public.bank_accounts where bank_id=v_bank and account_number=n->>'account' and currency=v_currency) then
++              insert into public.bank_accounts(bank_id,account_number,currency) values(v_bank,n->>'account',v_currency);
++            end if;
++          when 'projection' then
++            v_date := nullif(n->>'date','')::date;
++            if v_date is null or v_date < date '2000-01-01' or v_date > date '2100-12-31' then raise exception 'Fecha de proyección inválida'; end if;
++            v_entity_status := coalesce(v_entity_status,'proyectado');
++            if v_entity_status not in ('proyectado','confirmado','cancelado','borrador') then raise exception 'Estado de proyección inválido'; end if;
++            insert into public.projections(date,type,category,description,amount,currency,bank_id,status)
++            values(v_date,v_type,coalesce(n->>'category','other_income'),coalesce(nullif(n->>'description',''),'Proyección importada'),v_amount,v_currency,v_bank,v_entity_status) returning id into v_entity;
++          when 'investment' then
++            v_issue := nullif(n->>'startDate','')::date; v_due := nullif(n->>'endDate','')::date;
++            if v_issue is null or v_due is null or v_due < v_issue or v_issue < date '2000-01-01' or v_due > date '2100-12-31' then raise exception 'Fechas de inversión inválidas'; end if;
++            v_entity_status := coalesce(v_entity_status,'vigente');
++            if v_entity_status not in ('vigente','por_vencer','rescatada','rescate_programado') then raise exception 'Estado de inversión inválido'; end if;
++            insert into public.investments(bank_id,type,amount,currency,start_date,end_date,rate,estimated_interest,status,rate_known)
++            values(v_bank,coalesce(n->>'investmentType','colocacion'),v_amount,v_currency,v_issue,v_due,coalesce((n->>'rate')::numeric,0),coalesce((n->>'interest')::numeric,0),v_entity_status,coalesce((n->>'rateKnown')::boolean,n->>'rate' is not null)) returning id into v_entity;
++          else raise exception 'Entidad no compatible';
++          end case;
++        end if;
++      exception when others then
++        v_status := 'ERROR'; v_entity := null; v_key := null;
++        v_warning := concat_ws(' · ',nullif(v_warning,''),'No guardado: ' || SQLERRM);
++      end;
++    end if;
++    insert into public.import_records(import_batch_id,source_sheet,source_row,status,entity_type,entity_id,raw_json,normalized_json,warnings,dedupe_key)
++    values(v_batch.id,left(v_rec->>'sheet',255),greatest(1,(v_rec->>'row')::int),v_status,v_kind,v_entity,v_rec->'raw',n,nullif(v_warning,''),case when v_entity is not null then v_key else null end)
++    returning id into v_record;
++    if v_kind='cash_flow' and v_entity is not null then update public.cash_flow set import_record_id=v_record where id=v_entity; end if;
++  end loop;
++
++  update public.import_batches b set
++    valid_records=(select count(*) from public.import_records where import_batch_id=b.id and status='VALID'),
++    warning_records=(select count(*) from public.import_records where import_batch_id=b.id and status='WARNING'),
++    error_records=(select count(*) from public.import_records where import_batch_id=b.id and status='ERROR'),
++    duplicate_records=(select count(*) from public.import_records where import_batch_id=b.id and status='DUPLICATE'),
++    imported_records=(select count(*) from public.import_records where import_batch_id=b.id and entity_id is not null)
++  where b.id=v_batch.id returning * into v_batch;
++  update public.import_batches set status=case when v_batch.error_records=0 then 'completed' when v_batch.imported_records=0 then 'failed' else 'partial' end
++  where id=v_batch.id returning * into v_batch;
++  insert into public.audit_logs(actor,role,action,entity,new_value)
++  values(v_actor,public.current_role(),'Importó archivo Excel','Importación',p_file_name || ' · ' || v_batch.imported_records || ' guardados · ' || v_batch.error_records || ' errores');
++  insert into public.sync_sources(source,name,status,enabled,last_sync_at,records_synced,errors)
++  values('excel','Excel','connected',true,now(),v_batch.imported_records,v_batch.error_records)
++  on conflict(source) do update set last_sync_at=excluded.last_sync_at,records_synced=excluded.records_synced,errors=excluded.errors,status='connected';
++  insert into public.sync_history(source,records,duration_seconds,status,error_message,import_batch_id)
++  values('excel',v_batch.imported_records,extract(epoch from clock_timestamp()-v_start),case when v_batch.status='completed' then 'Success' when v_batch.status='failed' then 'Error' else 'Warning' end,
++    case when v_batch.error_records>0 then v_batch.error_records || ' filas no guardadas. Consulta el detalle.' else null end,v_batch.id);
++  return to_jsonb(v_batch);
++end; $$;
++revoke all on function public.import_treasury_records(text,text,jsonb) from public, anon;
++grant execute on function public.import_treasury_records(text,text,jsonb) to authenticated;
++
++-- Count only trace records whose financial entity still exists. Legacy counters
++-- and seeded Success rows cannot prove that a financial import took place.
++create or replace view public.verified_import_records with (security_invoker=true) as
++select r.id,r.import_batch_id,r.entity_type,r.entity_id from public.import_records r
++where r.status in ('VALID','WARNING') and (
++ (r.entity_type='cash_flow' and exists(select 1 from public.cash_flow e where e.id=r.entity_id)) or
++ (r.entity_type='invoice' and exists(select 1 from public.invoices e where e.id=r.entity_id)) or
++ (r.entity_type='customer' and exists(select 1 from public.customers e where e.id=r.entity_id)) or
++ (r.entity_type='investment' and exists(select 1 from public.investments e where e.id=r.entity_id)) or
++ (r.entity_type='projection' and exists(select 1 from public.projections e where e.id=r.entity_id)) or
++ (r.entity_type='bank_account' and exists(select 1 from public.bank_accounts e where e.id=r.entity_id))
++);
++grant select on public.verified_import_records to authenticated;
++
++create or replace function public.get_excel_import_status() returns jsonb
++language sql stable security invoker set search_path=public,pg_temp as $$
++with batches as (
++ select b.*, (select count(*) from verified_import_records r where r.import_batch_id=b.id)::int as present
++ from import_batches b where b.source='excel' and b.file_hash is not null
++), history as (
++ select b.id,'excel'::text as source,b.present as records,
++   coalesce((select h.duration_seconds from sync_history h where h.import_batch_id=b.id limit 1),0) as duration_seconds,
++   case when b.status='failed' then 'Error' when b.present<b.imported_records then 'Warning'
++     when b.error_records>0 or b.warning_records>0 then 'Warning' when b.present=0 then 'NoChanges' else 'Success' end as status,
++   case when b.present<b.imported_records then 'Parte de los datos de este lote ya no existe en la plataforma.'
++     when b.error_records>0 then b.error_records || ' filas no guardadas. Consulta Importaciones.'
++     when b.warning_records>0 then b.warning_records || ' filas guardadas con advertencias. Consulta Importaciones.'
++     when b.present=0 then 'Sin nuevos registros guardados.' else null end as error_message,
++   b.created_at as synced_at,true as verified
++ from batches b
++ union all
++ select h.id,h.source,h.records,h.duration_seconds,'Unverified',
++   'Registro histórico sin vínculo verificable con una importación. La cifra declarada no acredita datos guardados.',h.synced_at,false
++ from sync_history h where h.import_batch_id is null
++), recent as (select * from history order by synced_at desc limit 30)
++select jsonb_build_object(
++ 'records',(select count(distinct (r.entity_type,r.entity_id)) from verified_import_records r join batches b on b.id=r.import_batch_id),
++ 'last_sync_at',(select max(created_at) from batches where present>0),
++ 'errors',coalesce((select error_records from batches order by created_at desc limit 1),0),
++ 'history',coalesce((select jsonb_agg(to_jsonb(recent) order by synced_at desc) from recent),'[]'::jsonb)
++);
++$$;
++revoke all on function public.get_excel_import_status() from public,anon;
++grant execute on function public.get_excel_import_status() to authenticated;
