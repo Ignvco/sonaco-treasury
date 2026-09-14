@@ -33,9 +33,9 @@ export async function analyzeFile(file: File, onProgress?: (p: ImportProgress) =
   const buffer = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", buffer);
   const originalHash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-  const effective = new TextEncoder().encode("BASE-ONLY-20260914-v1:" + originalHash + JSON.stringify(overrides));
+  const effective = new TextEncoder().encode("BASE-ONLY-20260914-v2:" + originalHash + JSON.stringify(overrides));
   const fileHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", effective)), (b) => b.toString(16).padStart(2, "0")).join("");
-  return new Promise((resolve, reject) => {
+  const parsed = await new Promise<ImportPreview>((resolve, reject) => {
     const worker = new Worker(new URL("../workers/xlsx.worker.ts", import.meta.url), { type: "module" });
     const cleanup = () => { worker.terminate(); clearTimeout(timer); signal?.removeEventListener("abort", abort); };
     const fail = (reason: string) => { cleanup(); reject(new Error(reason)); };
@@ -52,17 +52,26 @@ export async function analyzeFile(file: File, onProgress?: (p: ImportProgress) =
     worker.onmessageerror = () => fail("No se pudo leer el resultado del archivo.");
     worker.postMessage({ file: buffer, name: file.name, overrides }, [buffer]);
   });
+  if(signal?.aborted) throw new Error("Análisis cancelado.");
+  onProgress?.({phase:"Comparando BASE con los registros guardados…",done:0,total:0});
+  const {data:comparison,error}=await db.rpc("compare_base_import",{p_records:parsed.records});
+  if(error) throw new Error(message(error));
+  if(signal?.aborted) throw new Error("Análisis cancelado.");
+  if(!comparison?.revision||!Array.isArray(comparison.rows)) throw new Error("No se pudo confirmar la comparación. Vuelve a analizar el archivo.");
+  return {...parsed,comparison};
 }
 
 export const importService = {
   analyzeFile,
-  async commitImport(preview: ImportPreview, onProgress?: (p: ImportProgress) => void): Promise<ImportBatch> {
+  async commitImport(preview: ImportPreview, onProgress?: (p: ImportProgress) => void, applyRows:number[] = []): Promise<ImportBatch> {
     if (!preview.total || preview.valid + preview.warning === 0) throw new Error("No hay filas válidas para importar. Revisa el mapeo y los errores.");
+    if(!preview.comparison) throw new Error("Vuelve a analizar el archivo para comparar los cambios.");
     const { data: session, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !session.session) throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
     onProgress?.({ phase: "Guardando registros y trazabilidad…", done: 0, total: 0 });
-    const { data, error } = await db.rpc("import_treasury_records", {
+    const { data, error } = await db.rpc("import_base_changes", {
       p_file_name: preview.fileName, p_file_hash: preview.fileHash, p_records: preview.records,
+      p_revision:preview.comparison.revision,p_apply_rows:applyRows,
     });
     // Never retry through another write path: an interrupted response may already have committed.
     if (error) throw new Error(message(error));

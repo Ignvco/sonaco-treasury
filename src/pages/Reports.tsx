@@ -74,13 +74,12 @@ export default function Reports() {
     banks: {
       name: "Posición Bancaria",
       icon: Landmark,
-      description: "Saldos contables, conciliados y diferencias",
+      description: "Saldos contables CLP calculados desde BASE",
       to: "/banks",
       rows: dashboard.positions.map((p) => ({
         Banco: p.bank.name,
         "Saldo contable": p.available,
-        "Saldo conciliado": p.reconciled,
-        Diferencia: p.difference,
+        Moneda: "CLP",
         Invertido: p.invested,
       })),
     },
@@ -131,6 +130,7 @@ export default function Reports() {
   return (
     <div className="t-fade-in flex flex-col gap-5">
       <PageHeader title="Reportes" subtitle="Informes de tesorería listos para exportar" />
+      <p className="text-xs text-muted-foreground">Base de cálculo de la proyección: partidas CLP de BASE. El dashboard permite revisar la suma literal de Excel y cada moneda por separado.</p>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {Object.values(datasets).map((report) => (

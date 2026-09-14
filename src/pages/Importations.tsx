@@ -49,13 +49,13 @@ export default function Importations() {
     if (files.length > 1) { setFailure("Selecciona un archivo a la vez para revisar sus datos antes de importar."); return; }
     setPreview(null); void analyze(files[0]);
   };
-  const confirm = async () => {
+  const confirm = async (applyRows:number[]) => {
     if (!preview || inFlight.current || !canWrite) return;
     inFlight.current = true; setBusy(true); setFailure(""); abort.current = null;
     try {
-      const batch = await importService.commitImport(preview, setProgress);
+      const batch = await importService.commitImport(preview, setProgress, applyRows);
       setSelected(batch); setStatusFilter("");
-      if (batch.status === "completed") toast.success("Importación confirmada", { description: `${batch.importedRecords ?? 0} filas guardadas · ${batch.duplicateRecords} duplicados omitidos.` });
+      if (batch.status === "completed") toast.success("Importación confirmada", { description: `${batch.importedRecords ?? 0} filas guardadas · ${batch.duplicateRecords} sin cambios u omitidas.` });
       else toast.warning("Revisa el resultado de la importación", { description: `${batch.importedRecords ?? 0} filas guardadas · ${batch.errorRecords} errores.` });
       setPreview(null); currentFile.current = null; setRefresh((r) => r + 1);
     } catch (err) { setFailure(err instanceof Error ? err.message : "No se pudo guardar. Revisa el historial antes de reintentar."); setRefresh((r) => r + 1); }
@@ -63,7 +63,7 @@ export default function Importations() {
   };
   const items = batches ?? [];
   return <div className="t-fade-in flex min-w-0 flex-col gap-6">
-    <PageHeader title="Importaciones" subtitle="Carga exclusiva de la hoja BASE · BASE-ONLY-20260914-v1" />
+    <PageHeader title="Importaciones" subtitle="Carga exclusiva de la hoja BASE · BASE-ONLY-20260914-v2" />
     <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-muted-foreground" aria-label="Pasos de importación">{["Selecciona tu archivo", "Revisa y valida", "Confirma la importación"].map((step, i) => <div key={step} className="flex items-center gap-3"><span className={cn("flex h-7 w-7 items-center justify-center rounded-full border", (preview ? i === 1 : i === 0) && "border-brand bg-brand text-white")}>{i + 1}</span><span>{step}</span>{i < 2 && <ArrowRight size={14} className="hidden sm:block" />}</div>)}</div>
     {failure && <div role="alert" className="flex items-start justify-between gap-3 rounded-2xl border border-danger/20 bg-danger-soft p-4 text-sm text-danger"><p>{failure}</p><button aria-label="Cerrar mensaje" onClick={() => setFailure("")}><X size={17} /></button></div>}
     {canWrite && !preview && <div className="grid gap-5 xl:grid-cols-[minmax(0,1.8fr)_minmax(270px,1fr)]">
@@ -79,7 +79,7 @@ export default function Importations() {
     </div>}
     {!canWrite && <div className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground">Puedes consultar el historial. Para importar necesitas el rol Tesorería o Administrador.</div>}
     {busy && progress && <div role="status" aria-live="polite" className="flex items-center gap-4 rounded-2xl border border-brand/20 bg-brand-soft p-5"><Loader2 className="shrink-0 animate-spin text-brand" size={22} /><div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{progress.phase}</p><p className="mt-1 text-xs text-muted-foreground">{abort.current ? "El archivo se analiza en tu dispositivo." : "Espera la confirmación antes de cerrar esta página."}</p></div>{abort.current && <button className="t-button-secondary" onClick={() => abort.current?.abort()}>Cancelar</button>}</div>}
-    {preview && <ImportPreview preview={preview} applied={overrides} busy={busy} onAnalyze={(o) => currentFile.current && void analyze(currentFile.current, o)} onConfirm={() => void confirm()} onDiscard={() => { setPreview(null); currentFile.current = null; }} />}
+    {preview && <ImportPreview key={preview.fileHash + preview.comparison?.revision} preview={preview} applied={overrides} busy={busy} onAnalyze={(o) => currentFile.current && void analyze(currentFile.current, o)} onConfirm={(rows) => void confirm(rows)} onDiscard={() => { setPreview(null); currentFile.current = null; }} />}
     <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
       <KpiCard label="Archivos recientes" value={items.length} subtext="Últimas 30 importaciones" plain icon={Files} />
       <KpiCard label="Filas analizadas" value={items.reduce((a, b) => a + b.totalRecords, 0)} subtext="En el historial reciente" plain />
